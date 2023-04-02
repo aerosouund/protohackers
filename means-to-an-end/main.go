@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"io/ioutil"
 	"strconv"
+	"sort"
 )
 
 type Message struct {
@@ -91,8 +92,31 @@ func handleInsert(message *Message) {
 	})
 }
 
-func handleQuery(m *Message) {
 
+func handleQuery(m *Message) {
+	startIndex := sort.Search(len(store), func(i int) bool {
+		return store[i].firstNum >= m.firstNum
+	})
+	endIndex := sort.Search(len(store), func(i int) bool {
+		return store[i].firstNum > m.secondNum
+	})
+
+	if endIndex > len(store)-1 {
+		endIndex = len(store)
+	}
+
+	if startIndex >= endIndex {
+		fmt.Println("No elements found in the range")
+		return
+	}
+
+	sum := 0
+    for _, elem := range store[startIndex:endIndex] {
+        sum += elem.Num
+    }
+
+    // Compute the average of the Num field values
+    avg := sum / float64(len(store))
 }
 
 func main() {
