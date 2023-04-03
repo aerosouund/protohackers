@@ -1,19 +1,19 @@
 package main
 
 import (
-	"fmt"
-	"net/http"
-	"log"
 	"encoding/binary"
+	"fmt"
 	"io/ioutil"
-	"strconv"
+	"log"
+	"net/http"
 	"sort"
+	"strconv"
 )
 
 type Message struct {
 	messageType string
-	firstNum int32
-	secondNum int32
+	firstNum    int32
+	secondNum   int32
 }
 
 type dataStore []*Message
@@ -32,13 +32,13 @@ func parseMessage(w http.ResponseWriter, r *http.Request) {
 	httpHexStr, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		panic(err)
 	}
 
 	asciiStr, err := strconv.Unquote(`"` + string(httpHexStr) + `"`)
 	if err != nil {
 		fmt.Println("Error:", err)
-		return
+		panic(err)
 	}
 
 	// Parse the input data
@@ -61,24 +61,22 @@ func parseMessage(w http.ResponseWriter, r *http.Request) {
 	return firstChar, numbers
 }
 
-
 func createMessage(ch string, nums []int32) {
 	var m Message
 	m.firstNum = nums[0]
 	m.secondNum = nums[1]
 	switch ch {
-		case "I":
-			// logic for insert
-			m.messageType = "Insert"
-		case "Q":
-			// logic for query
-			m.messageType = "Query"
-		default:
-			fmt.Println("Unknown message type!")
+	case "I":
+		// logic for insert
+		m.messageType = "Insert"
+	case "Q":
+		// logic for query
+		m.messageType = "Query"
+	default:
+		fmt.Println("Unknown message type!")
 	}
 	return *m
 }
-
 
 func handleInsert(message *Message) {
 	store.append(message)
@@ -88,10 +86,9 @@ func handleInsert(message *Message) {
 	}
 
 	sort.Slice(store, func(i, j int) bool {
-		return store[i].firstNum < arr[j].firstNum
+		return store[i].firstNum < store[j].firstNum
 	})
 }
-
 
 func handleQuery(m *Message) {
 	startIndex := sort.Search(len(store), func(i int) bool {
@@ -110,13 +107,14 @@ func handleQuery(m *Message) {
 		return
 	}
 
-	sum := 0
-    for _, elem := range store[startIndex:endIndex] {
-        sum += elem.Num
-    }
+	sum := 0.0
+	for _, elem := range store[startIndex:endIndex] {
+		sum += elem.firstNum
+	}
 
-    // Compute the average of the Num field values
-    avg := sum / float64(len(store))
+	// Compute the average of the Num field values
+	avg := sum / float64(len(store[startIndex:endIndex]))
+	return avg
 }
 
 func main() {
