@@ -9,14 +9,12 @@ import (
 )
 
 type Message struct {
-	messageType string
+	messageType rune
 	firstNum    int32
 	secondNum   int32
 }
 
-type dataStore []*Message
-
-var store dataStore
+var store []Message
 
 /*
 TO-DO:
@@ -26,7 +24,7 @@ TO-DO:
 4- a storage method (session separation)
 */
 
-func parseMessage(conn net.Conn) (rune, []int32) {
+func handleMessage(conn net.Conn) {
 	buf := make([]byte, 1024)
 
 	for {
@@ -35,49 +33,30 @@ func parseMessage(conn net.Conn) (rune, []int32) {
 			if err != io.EOF {
 				fmt.Println("Error reading:", err.Error())
 			}
-			return nil, nil
+			return
+		}
+		for i := 0; i < len(buf[:n]); i += 9 {
+			var m Message
+			m.messageType = rune(buf[i])
+
+			m.firstNum = int32(binary.BigEndian.Uint32(buf[i+1 : i+4]))
+			m.secondNum = int32(binary.BigEndian.Uint32(buf[i+5 : i+8]))
+			fmt.Printf("Parsed message with following values: %s, %s, %s", string(m.messageType), m.firstNum, m.secondNum)
+			if string(m.messageType) == "I" {
+				handleInsert(m)
+			}
+			if string(m.messageType) == "Q" {
+				handleQuery(m)
+			}
 		}
 
 		// Print out the incoming data
 		fmt.Println(buf[:n])
 	}
-
-	// Extract the remaining bytes as int32 values
-	var numbers []int32
-	for i := 0; i < len(buf[:n]); i += 9 {
-		var m Message
-		m.messageType = rune(buf[i])
-
-		m.firstNum = int32(binary.BigEndian.Uint32(buf[i+1 : i+4]))
-		m.secondNum = int32(binary.BigEndian.Uint32(buf[i+5 : i+8]))
-		numbers = append(numbers, number1)
-	}
-
-	fmt.Printf("First character: %c\n", firstChar)
-	fmt.Printf("Numbers: %v\n", numbers)
-
-	return firstChar, numbers
 }
 
-func createMessage(ch string, nums []int32) {
-	var m Message
-	m.firstNum = nums[0]
-	m.secondNum = nums[1]
-	switch ch {
-	case "I":
-		// logic for insert
-		m.messageType = "Insert"
-	case "Q":
-		// logic for query
-		m.messageType = "Query"
-	default:
-		fmt.Println("Unknown message type!")
-	}
-	return *m
-}
-
-func handleInsert(message *Message) {
-	// append(store, message)
+func handleInsert(m Message) {
+	store = append(store, m)
 
 	if len(store) < 2 {
 		return
@@ -88,7 +67,7 @@ func handleInsert(message *Message) {
 	})
 }
 
-func handleQuery(m *Message) {
+func handleQuery(m Message) float32 {
 	startIndex := sort.Search(len(store), func(i int) bool {
 		return store[i].firstNum >= m.firstNum
 	})
@@ -102,16 +81,17 @@ func handleQuery(m *Message) {
 
 	if startIndex >= endIndex {
 		fmt.Println("No elements found in the range")
-		return
+		return 0
 	}
 
-	sum := 0.0
+	var sum float32 = 0.0
 	for _, elem := range store[startIndex:endIndex] {
-		sum += elem.firstNum
+		firstNumFloat := float32(elem.firstNum)
+		sum += firstNumFloat
 	}
 
 	// Compute the average of the Num field values
-	avg := sum / float64(len(store[startIndex:endIndex]))
+	avg := sum / float32(len(store[startIndex:endIndex]))
 	return avg
 }
 
@@ -134,6 +114,6 @@ func main() {
 		}
 
 		// Handle the connection in a new goroutine
-		go parseMessage(conn)
+		go handleMessage(conn)
 	}
 }
