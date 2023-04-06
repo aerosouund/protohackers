@@ -3,11 +3,9 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
+	"io"
+	"net"
 	"sort"
-	"strconv"
 )
 
 type Message struct {
@@ -28,31 +26,31 @@ TO-DO:
 4- a storage method (session separation)
 */
 
-func parseMessage(w http.ResponseWriter, r *http.Request) {
-	httpHexStr, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		panic(err)
+func parseMessage(conn net.Conn) (rune, []int32) {
+	buf := make([]byte, 1024)
+
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				fmt.Println("Error reading:", err.Error())
+			}
+			return nil, nil
+		}
+
+		// Print out the incoming data
+		fmt.Println(buf[:n])
 	}
-
-	asciiStr, err := strconv.Unquote(`"` + string(httpHexStr) + `"`)
-	if err != nil {
-		fmt.Println("Error:", err)
-		panic(err)
-	}
-
-	// Parse the input data
-	data := []byte(asciiStr)
-
-	// Extract the first byte as a character
-	firstChar := rune(data[0])
 
 	// Extract the remaining bytes as int32 values
 	var numbers []int32
-	for i := 1; i < len(data); i += 4 {
-		fmt.Println(data[i : i+4])
-		number := int32(binary.BigEndian.Uint32(data[i : i+4]))
-		numbers = append(numbers, number)
+	for i := 0; i < len(buf[:n]); i += 9 {
+		var m Message
+		m.messageType = rune(buf[i])
+
+		m.firstNum = int32(binary.BigEndian.Uint32(buf[i+1 : i+4]))
+		m.secondNum = int32(binary.BigEndian.Uint32(buf[i+5 : i+8]))
+		numbers = append(numbers, number1)
 	}
 
 	fmt.Printf("First character: %c\n", firstChar)
@@ -79,7 +77,7 @@ func createMessage(ch string, nums []int32) {
 }
 
 func handleInsert(message *Message) {
-	store.append(message)
+	// append(store, message)
 
 	if len(store) < 2 {
 		return
@@ -118,11 +116,24 @@ func handleQuery(m *Message) {
 }
 
 func main() {
-	http.HandleFunc("/", parseMessage)
-
-	err := http.ListenAndServe("localhost:8000", nil)
-
+	listener, err := net.Listen("tcp", ":8000")
 	if err != nil {
-		log.Fatalln("ListenAndServe:", err)
+		fmt.Println("Error listening:", err.Error())
+		return
+	}
+	defer listener.Close()
+
+	fmt.Println("Listening on port 8000...")
+
+	for {
+		// Wait for a connection
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection:", err.Error())
+			continue
+		}
+
+		// Handle the connection in a new goroutine
+		go parseMessage(conn)
 	}
 }
