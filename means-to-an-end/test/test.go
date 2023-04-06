@@ -46,10 +46,6 @@ func handleConnection(conn net.Conn) {
 		}
 
 		// Print out the incoming data
-		fmt.Println(string(buf[:n]))
+		fmt.Println(buf[:n])
 	}
-	// Print out the incoming data
-
-	// Close the connection
-	conn.Close()
 }
