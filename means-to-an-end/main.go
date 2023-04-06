@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"sort"
 )
@@ -29,6 +30,7 @@ func handleMessage(conn net.Conn) {
 
 	for {
 		n, err := conn.Read(buf)
+		fmt.Println(buf[:n])
 		if err != nil {
 			if err != io.EOF {
 				fmt.Println("Error reading:", err.Error())
@@ -46,12 +48,16 @@ func handleMessage(conn net.Conn) {
 				handleInsert(m)
 			}
 			if string(m.messageType) == "Q" {
-				handleQuery(m)
+				a := handleQuery(m)
+				returnBuf := make([]byte, 8)
+				binary.LittleEndian.PutUint32(returnBuf, math.Float32bits(a))
+
+				// Send the binary data as the TCP response
+				if _, err := conn.Write(buf); err != nil {
+					return
+				}
 			}
 		}
-
-		// Print out the incoming data
-		fmt.Println(buf[:n])
 	}
 }
 
