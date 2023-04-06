@@ -2,43 +2,54 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
+	"io"
+	"net"
 )
 
-type Message struct {
-	messageType string
-	firstNum    int32
-	secondNum   int32
-}
-
-/*
-TO-DO:
-1- a listener that recieves data
-2- a message parser
-3- message objects (structs) with the parsed data
-4- a storage method (session separation)
-*/
-
-func parseMessage(w http.ResponseWriter, r *http.Request) {
-	httpHexStr, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		panic(err)
-	}
-	b := string(httpHexStr)
-
-	fmt.Printf("The body coming from protohackers: %s\n", b)
-}
-
 func main() {
-	http.HandleFunc("/", parseMessage)
-	fmt.Println("Server starting")
-
-	err := http.ListenAndServe(":8000", nil)
-
+	// Listen on TCP port 8080
+	listener, err := net.Listen("tcp", ":8000")
 	if err != nil {
-		log.Fatalln("ListenAndServe:", err)
+		fmt.Println("Error listening:", err.Error())
+		return
 	}
+	defer listener.Close()
+
+	fmt.Println("Listening on port 8000...")
+
+	for {
+		// Wait for a connection
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection:", err.Error())
+			continue
+		}
+
+		// Handle the connection in a new goroutine
+		go handleConnection(conn)
+	}
+}
+
+func handleConnection(conn net.Conn) {
+	// Make a buffer to hold incoming data
+	buf := make([]byte, 1024)
+
+	// Read the incoming connection into the buffer
+	for {
+		// Read the incoming connection into the buffer
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				fmt.Println("Error reading:", err.Error())
+			}
+			return
+		}
+
+		// Print out the incoming data
+		fmt.Println(string(buf[:n]))
+	}
+	// Print out the incoming data
+
+	// Close the connection
+	conn.Close()
 }
