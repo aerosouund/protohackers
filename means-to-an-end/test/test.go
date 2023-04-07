@@ -32,12 +32,13 @@ func main() {
 
 func handleConnection(conn net.Conn) {
 	// Make a buffer to hold incoming data
-	buf := make([]byte, 1024)
+	buf := make([]byte, 0, 50)
 
 	// Read the incoming connection into the buffer
 	for {
-		// Read the incoming connection into the buffer
-		n, err := conn.Read(buf)
+		// Read the incoming connection into the remaining buffer space
+		// starting from the current length of the buffer
+		n, err := conn.Read(buf[len(buf):cap(buf)])
 		if err != nil {
 			if err != io.EOF {
 				fmt.Println("Error reading:", err.Error())
@@ -45,7 +46,10 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
-		// Print out the incoming data
-		fmt.Println(buf[:n])
+		// Update the length of the buffer to include the newly read bytes
+		buf = buf[:len(buf)+n]
+
+		// Print out the incoming data and the current buffer contents
+		fmt.Println(string(buf[:n]), buf)
 	}
 }

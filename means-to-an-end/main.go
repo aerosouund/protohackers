@@ -27,6 +27,7 @@ TO-DO:
 
 func handleMessage(conn net.Conn) {
 	buf := make([]byte, 0, 100)
+	byteCounter := 0
 
 	// Read the incoming connection into the buffer
 	for {
@@ -37,20 +38,22 @@ func handleMessage(conn net.Conn) {
 			if err != io.EOF {
 				fmt.Println("Error reading:", err.Error())
 			}
-			return
+			break
 		}
 
 		// Update the length of the buffer to include the newly read bytes
 		buf = buf[:len(buf)+n]
-		fmt.Println(string(buf[:n]), buf)
+		byteCounter += n
 
-		for i := 0; i < len(buf[:n]); i += 9 {
+		if byteCounter%9 == 0 {
+			fmt.Printf("entered the condition, %d, %s \n", byteCounter, buf)
+			fmt.Println(buf, len(buf))
 			var m Message
-			m.messageType = rune(buf[i])
+			m.messageType = rune(buf[byteCounter-9])
 
-			m.firstNum = int32(binary.BigEndian.Uint32(buf[i+1 : i+4]))
-			m.secondNum = int32(binary.BigEndian.Uint32(buf[i+5 : i+8]))
-			fmt.Printf("Parsed message with following values: %s, %s, %s", string(m.messageType), m.firstNum, m.secondNum)
+			m.firstNum = int32(binary.BigEndian.Uint32(buf[byteCounter-8 : byteCounter-5]))
+			m.secondNum = int32(binary.BigEndian.Uint32(buf[byteCounter-4 : byteCounter]))
+			fmt.Printf("Parsed message with following values: %s, %d, %d", string(m.messageType), m.firstNum, m.secondNum)
 			if string(m.messageType) == "I" {
 				handleInsert(m)
 			}
