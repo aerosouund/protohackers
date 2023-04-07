@@ -7,7 +7,6 @@ import (
 	"math"
 	"net"
 	"sort"
-	"time"
 )
 
 type Message struct {
@@ -27,21 +26,27 @@ TO-DO:
 */
 
 func handleMessage(conn net.Conn) {
-	buf := make([]byte, 1024)
+	buf := make([]byte, 0, 100)
 
+	// Read the incoming connection into the buffer
 	for {
-		n, err := conn.Read(buf)
-		fmt.Println(buf[:n])
+		// Read the incoming connection into the remaining buffer space
+		// starting from the current length of the buffer
+		n, err := conn.Read(buf[len(buf):cap(buf)])
 		if err != nil {
 			if err != io.EOF {
 				fmt.Println("Error reading:", err.Error())
 			}
 			return
 		}
+
+		// Update the length of the buffer to include the newly read bytes
+		buf = buf[:len(buf)+n]
+		fmt.Println(string(buf[:n]), buf)
+
 		for i := 0; i < len(buf[:n]); i += 9 {
 			var m Message
 			m.messageType = rune(buf[i])
-			time.Sleep(2 * time.Second)
 
 			m.firstNum = int32(binary.BigEndian.Uint32(buf[i+1 : i+4]))
 			m.secondNum = int32(binary.BigEndian.Uint32(buf[i+5 : i+8]))
