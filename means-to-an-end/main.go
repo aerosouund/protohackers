@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"sort"
+	"time"
 )
 
 type Message struct {
@@ -40,6 +41,7 @@ func handleMessage(conn net.Conn) {
 		for i := 0; i < len(buf[:n]); i += 9 {
 			var m Message
 			m.messageType = rune(buf[i])
+			time.Sleep(2 * time.Second)
 
 			m.firstNum = int32(binary.BigEndian.Uint32(buf[i+1 : i+4]))
 			m.secondNum = int32(binary.BigEndian.Uint32(buf[i+5 : i+8]))
