@@ -17,7 +17,7 @@ type Message struct {
 var store []Message
 
 func handleMessage(conn net.Conn) {
-	buf := make([]byte, 0, 100)
+	buf := make([]byte, 0, 1024)
 
 	// Read the incoming connection into the buffer
 	for {
