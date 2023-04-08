@@ -41,7 +41,6 @@ func handleMessage(conn net.Conn) {
 
 			m.firstNum = int32(binary.BigEndian.Uint32(buf[len(buf)-8 : len(buf)-4]))
 			m.secondNum = int32(binary.BigEndian.Uint32(buf[len(buf)-4 : len(buf)]))
-			// fmt.Printf("Parsed message with following values: %s, %d, %d", string(m.messageType), m.firstNum, m.secondNum)
 			if string(m.messageType) == "I" {
 				handleInsert(m)
 			}
