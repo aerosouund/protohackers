@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"sort"
 )
@@ -27,7 +26,6 @@ TO-DO:
 
 func handleMessage(conn net.Conn) {
 	buf := make([]byte, 0, 100)
-	byteCounter := 0
 
 	// Read the incoming connection into the buffer
 	for {
@@ -43,27 +41,26 @@ func handleMessage(conn net.Conn) {
 
 		// Update the length of the buffer to include the newly read bytes
 		buf = buf[:len(buf)+n]
-		byteCounter += n
 
-		if byteCounter%9 == 0 {
-			fmt.Printf("entered the condition, %d, %s \n", byteCounter, buf)
-			fmt.Println(buf, len(buf))
+		if len(buf)%9 == 0 {
 			var m Message
-			m.messageType = rune(buf[byteCounter-9])
+			m.messageType = rune(buf[len(buf)-9])
+			fmt.Println(buf[len(buf)-9 : len(buf)])
 
-			m.firstNum = int32(binary.BigEndian.Uint32(buf[byteCounter-8 : byteCounter-5]))
-			m.secondNum = int32(binary.BigEndian.Uint32(buf[byteCounter-4 : byteCounter]))
-			fmt.Printf("Parsed message with following values: %s, %d, %d", string(m.messageType), m.firstNum, m.secondNum)
+			m.firstNum = int32(binary.BigEndian.Uint32(buf[len(buf)-8 : len(buf)-4]))
+			m.secondNum = int32(binary.BigEndian.Uint32(buf[len(buf)-4 : len(buf)]))
+			// fmt.Printf("Parsed message with following values: %s, %d, %d", string(m.messageType), m.firstNum, m.secondNum)
 			if string(m.messageType) == "I" {
 				handleInsert(m)
 			}
 			if string(m.messageType) == "Q" {
 				a := handleQuery(m)
-				returnBuf := make([]byte, 8)
-				binary.LittleEndian.PutUint32(returnBuf, math.Float32bits(a))
+				returnBuf := make([]byte, 4)
+				binary.BigEndian.PutUint32(returnBuf, uint32(a))
+				fmt.Println(returnBuf)
 
 				// Send the binary data as the TCP response
-				if _, err := conn.Write(buf); err != nil {
+				if _, err := conn.Write(returnBuf); err != nil {
 					return
 				}
 			}
@@ -102,12 +99,13 @@ func handleQuery(m Message) float32 {
 
 	var sum float32 = 0.0
 	for _, elem := range store[startIndex:endIndex] {
-		firstNumFloat := float32(elem.firstNum)
-		sum += firstNumFloat
+		secondNumFloat := float32(elem.secondNum)
+		sum += secondNumFloat
 	}
 
 	// Compute the average of the Num field values
 	avg := sum / float32(len(store[startIndex:endIndex]))
+	fmt.Println(avg)
 	return avg
 }
 
