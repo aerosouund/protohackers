@@ -16,14 +16,6 @@ type Message struct {
 
 var store []Message
 
-/*
-TO-DO:
-1- a listener that recieves data
-2- a message parser
-3- message objects (structs) with the parsed data
-4- a storage method (session separation)
-*/
-
 func handleMessage(conn net.Conn) {
 	buf := make([]byte, 0, 100)
 
