@@ -37,10 +37,12 @@ func handleMessage(conn net.Conn) {
 		if len(buf)%9 == 0 {
 			var m Message
 			m.messageType = rune(buf[len(buf)-9])
-			fmt.Println(buf[len(buf)-9 : len(buf)])
+			// fmt.Println(buf[len(buf)-9 : len(buf)])
 
 			m.firstNum = int32(binary.BigEndian.Uint32(buf[len(buf)-8 : len(buf)-4]))
 			m.secondNum = int32(binary.BigEndian.Uint32(buf[len(buf)-4 : len(buf)]))
+			fmt.Println(m.secondNum)
+			fmt.Printf("Parsed message with following values: %s, %d, %d \n", string(m.messageType), m.firstNum, m.secondNum)
 			if string(m.messageType) == "I" {
 				handleInsert(m)
 			}
@@ -83,9 +85,13 @@ func handleQuery(m Message) float32 {
 		endIndex = len(store)
 	}
 
-	if startIndex >= endIndex {
+	if startIndex > endIndex {
 		fmt.Println("No elements found in the range")
 		return 0
+	}
+
+	if startIndex == endIndex {
+		return float32(store[startIndex].secondNum)
 	}
 
 	var sum float32 = 0.0
