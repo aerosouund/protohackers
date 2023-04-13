@@ -60,8 +60,14 @@ func handleConnection(conn net.Conn) {
 		scanner.Scan()
 		input := scanner.Text()
 
+		// if err := scanner.Err(); err != nil {
+		// 	fmt.Println("Error:", err)
+		// 	break
+		// }
+
 		// If the client sends "quit", close the connection
-		if input == "quit" {
+		if err := scanner.Err(); err != nil {
+			conn.Close()
 			fmt.Printf("'%s' has left the room\n", name)
 			clientsMu.Lock()
 			// Remove the client from the list of active connections
@@ -76,8 +82,10 @@ func handleConnection(conn net.Conn) {
 			message := fmt.Sprintf("'%s' has left the room\n", name)
 			sendToAll(message)
 			return
-		} else {
+		}
+		if len(input) != 0 {
 			message := fmt.Sprintf("[%s] %s", name, input)
+			// fmt.Println(message)
 			sendToAll(message)
 		}
 	}
@@ -105,7 +113,7 @@ func main() {
 		conn, err := listener.Accept()
 		if err != nil {
 			fmt.Printf("Error: %s\n", err)
-			continue
+			// continue
 		}
 		fmt.Printf("New connection from %s\n", conn.RemoteAddr().String())
 		go handleConnection(conn)
