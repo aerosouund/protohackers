@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -22,14 +23,26 @@ func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	// Send the "What is your name?" question to the client
-	fmt.Fprintf(conn, "What is your name?\n")
+	fmt.Fprintf(conn, "Welcome to budgetchat! What shall I call you?\n")
 
 	// Read the client's name
 	scanner := bufio.NewScanner(conn)
 	scanner.Scan()
 	name := scanner.Text()
 
-	fmt.Printf("Client '%s' has joined\n", name)
+	fmt.Printf("'%s' has joined the room\n", name)
+
+	if len(clients) != 0 {
+		greetingMsg := "* This room contains "
+		format := strings.Repeat("%s ", len(clients)) + "\n"
+
+		var clientNames []interface{}
+		for _, client := range clients {
+			clientNames = append(clientNames, client.name+",")
+		}
+
+		fmt.Fprintf(conn, greetingMsg+format, clientNames...)
+	}
 
 	// Add the client to the list of active connections
 	client := &client{conn, name}
@@ -38,7 +51,7 @@ func handleConnection(conn net.Conn) {
 	clientsMu.Unlock()
 
 	// Send a message to all connected clients
-	message := fmt.Sprintf("Client '%s' has joined", name)
+	message := fmt.Sprintf("'%s' has joined", name)
 	sendToAll(message)
 
 	// Keep the connection alive
@@ -49,7 +62,7 @@ func handleConnection(conn net.Conn) {
 
 		// If the client sends "quit", close the connection
 		if input == "quit" {
-			fmt.Printf("Client '%s' has left\n", name)
+			fmt.Printf("'%s' has left the room\n", name)
 			clientsMu.Lock()
 			// Remove the client from the list of active connections
 			for i, c := range clients {
@@ -60,13 +73,13 @@ func handleConnection(conn net.Conn) {
 			}
 			clientsMu.Unlock()
 			// Send a message to all connected clients
-			message := fmt.Sprintf("Client '%s' has left", name)
+			message := fmt.Sprintf("'%s' has left the room\n", name)
 			sendToAll(message)
 			return
+		} else {
+			message := fmt.Sprintf("[%s] %s", name, input)
+			sendToAll(message)
 		}
-
-		// Echo the client's input back to them
-		fmt.Fprintf(conn, "You said: %s\n", input)
 	}
 }
 
@@ -79,14 +92,14 @@ func sendToAll(message string) {
 }
 
 func main() {
-	listener, err := net.Listen("tcp", ":1234")
+	listener, err := net.Listen("tcp", ":8000")
 	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		os.Exit(1)
 	}
 	defer listener.Close()
 
-	fmt.Println("Server started. Listening on port 1234...")
+	fmt.Println("Server started. Listening on port 8000...")
 
 	for {
 		conn, err := listener.Accept()
