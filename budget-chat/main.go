@@ -32,27 +32,25 @@ func handleConnection(conn net.Conn) {
 	if len(name) != 0 {
 		fmt.Printf("'%s' has joined the room\n", name)
 
-		if len(clients) != 0 {
-			greetingMsg := "* This room contains "
-			format := strings.Repeat("%s ", len(clients)) + "\n"
+		greetingMsg := "* This room contains "
+		format := strings.Repeat("%s ", len(clients)) + "\n"
 
-			var clientNames []interface{}
-			for _, client := range clients {
-				clientNames = append(clientNames, client.name+",")
-			}
-
-			fmt.Fprintf(conn, greetingMsg+format, clientNames...)
+		var clientNames []interface{}
+		for _, client := range clients {
+			clientNames = append(clientNames, client.name+",")
 		}
 
+		fmt.Fprintf(conn, greetingMsg+format, clientNames...)
+
 		// Add the client to the list of active connections
+		message := fmt.Sprintf("* '%s' has joined", name)
+		sendToAll(message)
+
 		client := &client{conn, name}
 		clientsMu.Lock()
 		clients = append(clients, client)
 		clientsMu.Unlock()
 
-		// Send a message to all connected clients
-		message := fmt.Sprintf("'%s' has joined", name)
-		sendToAll(message)
 	} else {
 		return
 	}
