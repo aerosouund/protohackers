@@ -24,13 +24,17 @@ func handleConnection(conn net.Conn) {
 
 	fmt.Fprintf(conn, "Welcome to budgetchat! What shall I call you?\n")
 
-	// Read the client's name
 	scanner := bufio.NewScanner(conn)
 	scanner.Scan()
 	name := scanner.Text()
 
 	if len(name) != 0 {
-		fmt.Printf("'%s' has joined the room\n", name)
+		if len(name) >= 16 {
+			fmt.Fprintf(conn, "Invalid name")
+			conn.Close()
+			return
+		}
+		fmt.Printf("* '%s' has joined the room\n", name)
 
 		greetingMsg := "* This room contains "
 		format := strings.Repeat("%s ", len(clients)) + "\n"
@@ -43,7 +47,7 @@ func handleConnection(conn net.Conn) {
 		fmt.Fprintf(conn, greetingMsg+format, clientNames...)
 
 		// Add the client to the list of active connections
-		message := fmt.Sprintf("* '%s' has joined", name)
+		message := fmt.Sprintf("* '%s' has joined the room", name)
 		sendToAll(message)
 
 		client := &client{conn, name}
@@ -63,7 +67,7 @@ func handleConnection(conn net.Conn) {
 
 		if res == false {
 			conn.Close()
-			fmt.Printf("'%s' has left the room\n", name)
+			fmt.Printf("* '%s' has left the room", name)
 			clientsMu.Lock()
 			// Remove the client from the list of active connections
 			for i, c := range clients {
@@ -73,15 +77,25 @@ func handleConnection(conn net.Conn) {
 				}
 			}
 			clientsMu.Unlock()
-			message := fmt.Sprintf("'%s' has left the room\n", name)
+			message := fmt.Sprintf("* '%s' has left the room", name)
 			sendToAll(message)
 			return
 		}
 		if len(input) != 0 {
 			message := fmt.Sprintf("[%s] %s", name, input)
-			sendToAll(message)
+			sendToAllExceptSender(conn, message)
 		}
 	}
+}
+
+func sendToAllExceptSender(conn net.Conn, message string) {
+	clientsMu.Lock()
+	for _, client := range clients {
+		if client.conn != conn {
+			fmt.Fprintf(client.conn, "%s\n", message)
+		}
+	}
+	clientsMu.Unlock()
 }
 
 func sendToAll(message string) {
