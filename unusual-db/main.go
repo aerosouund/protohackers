@@ -9,16 +9,21 @@ import (
 func handlePacket(db map[string]string, buffer []byte, addr *net.UDPAddr, conn *net.UDPConn) {
 
 	input := string(buffer)
+	fmt.Println("the main input", input)
+	if len(input) >= 1000 {
+		return
+	}
 
 	if string(input[len(input)-1]) == "\n" {
 		input = input[:len(input)-1]
 	}
 
-	fmt.Println("the main input", input)
-
 	for i, c := range input {
 		if string(c) == "=" {
 			fmt.Printf("Found equal sign at index %d\n", i)
+			if len(input[:i]) == 0 {
+				db[""] = input[i+1:]
+			}
 			if input[:i] != "version" {
 				db[input[:i]] = input[i+1:]
 			}
