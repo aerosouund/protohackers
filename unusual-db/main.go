@@ -14,15 +14,13 @@ func handlePacket(db map[string]string, buffer []byte, addr *net.UDPAddr, conn *
 		return
 	}
 
-	if string(input[len(input)-1]) == "\n" {
-		input = input[:len(input)-1]
-	}
-
 	for i, c := range input {
 		if string(c) == "=" {
-			fmt.Printf("Found equal sign at index %d\n", i)
 			if len(input[:i]) == 0 {
-				db[""] = input[i+1:]
+				if len(input[i+1:]) != 0 {
+					db[""] = input[i+1:]
+				}
+				return
 			}
 			if input[:i] != "version" {
 				db[input[:i]] = input[i+1:]
@@ -30,21 +28,22 @@ func handlePacket(db map[string]string, buffer []byte, addr *net.UDPAddr, conn *
 			return
 		}
 	}
-
 	val := db[input]
 
 	data := fmt.Sprintf("%s=%s", input, val)
-	fmt.Println("the data", data)
+
 	_, err := conn.WriteToUDP([]byte(data), addr)
 	if err != nil {
 		fmt.Printf("Error sending UDP response: %s\n", err)
 		return
 	}
+	return
 }
 
 func main() {
 	db := make(map[string]string)
 	db["version"] = "Ken's Key-Value Store 1.0\n"
+	db[""] = ""
 
 	udpAddr, err := net.ResolveUDPAddr("udp", ":8000")
 	if err != nil {
