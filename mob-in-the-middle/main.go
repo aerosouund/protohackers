@@ -3,10 +3,10 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"regexp"
-	"strings"
 	"sync"
 )
 
@@ -20,11 +20,73 @@ var (
 	clientsMu sync.Mutex
 )
 
-func handleConnection(conn net.Conn, upcon net.Conn) {
+func handleUpstream(conn net.Conn, initialChannel chan string, messagesUpstream <-chan string, messagesDownstream chan<- string) {
 	defer conn.Close()
-	defer upcon.Close()
 
-	fmt.Fprintf(conn, "Welcome to budgetchat! What shall I call you?\n")
+	initialGreeting := make([]byte, 1024)
+
+	n, err := conn.Read(initialGreeting)
+	if err != nil {
+		if err != io.EOF {
+			fmt.Println("Error reading:", err.Error())
+		}
+	}
+
+	initialChannel <- string(initialGreeting[:n])
+
+	name := <-initialChannel
+
+	fmt.Fprintf(conn, name)
+
+	whosInTheRoom := make([]byte, 1024)
+	n, err = conn.Read(whosInTheRoom)
+	if err != nil {
+		if err != io.EOF {
+			fmt.Println("Error reading additional data from connection:", err.Error())
+			return
+		}
+	}
+	fmt.Println("the incoming greeting data :", string(whosInTheRoom[:n]))
+	initialChannel <- string(whosInTheRoom[:n]) + "\n"
+
+	joinAnnouncement := make([]byte, 1024)
+	n, err = conn.Read(joinAnnouncement)
+	if err != nil {
+		if err != io.EOF {
+			fmt.Println("Error reading additional data from connection:", err.Error())
+			return
+		}
+	}
+	fmt.Println("the incoming greeting data :", string(joinAnnouncement[:n]))
+	initialChannel <- string(joinAnnouncement[:n]) + "\n"
+
+	for {
+
+		messagesComingFromClient := <-messagesUpstream
+		fmt.Fprintf(conn, messagesComingFromClient)
+
+		incomingData := make([]byte, 1024)
+		n, err := conn.Read(incomingData)
+		if err != nil {
+			if err != io.EOF {
+				fmt.Println("Error reading additional data from connection:", err.Error())
+				return
+			}
+		}
+		input := string(incomingData[:n])
+
+		messagesDownstream <- input
+
+	}
+}
+
+func handleConnection(conn net.Conn, initialChannel chan string, messagesUpstream chan<- string, messagesDownstream <-chan string) {
+
+	defer conn.Close()
+	greeting := <-initialChannel
+	fmt.Println("first greeting ", greeting)
+
+	fmt.Fprintf(conn, greeting)
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Scan()
@@ -36,44 +98,24 @@ func handleConnection(conn net.Conn, upcon net.Conn) {
 			conn.Close()
 			return
 		}
+		initialChannel <- name + "\n"
+		whosInTheRoom := <-initialChannel
+		fmt.Println("whos in the room ", whosInTheRoom)
 
-		gscanner := bufio.NewScanner(upcon)
-		for gscanner.Scan() {
-			textresponse := gscanner.Text()
-			fmt.Println("Response:", string(textresponse[len(textresponse)-1]))
-		}
+		fmt.Fprintf(conn, whosInTheRoom)
 
-		fmt.Fprintf(upcon, name)
-
-		gscanner.Scan()
-		input := gscanner.Text()
-
-		// parse whats coming from the upstream
-		fmt.Println(input)
-
-		fmt.Printf("* '%s' has joined the room\n", name)
-
-		greetingMsg := "* This room contains "
-		format := strings.Repeat("%s ", len(clients)) + "\n"
-
-		var clientNames []interface{}
-		for _, client := range clients {
-			clientNames = append(clientNames, client.name+",")
-		}
-
-		fmt.Fprintf(conn, greetingMsg+format, clientNames...)
-		fmt.Fprintf(upcon, greetingMsg+format, clientNames...)
+		joinAnnouncement := <-initialChannel
+		fmt.Println("join announcement ", joinAnnouncement)
 
 		// Add the client to the list of active connections
-		message := fmt.Sprintf("* '%s' has joined the room\n", name)
+		// message := fmt.Sprintf("* '%s' has joined the room", name)
 
 		client := &client{conn, name}
 		clientsMu.Lock()
 		clients = append(clients, client)
 		clientsMu.Unlock()
 
-		sendToAll(message)
-		fmt.Fprintf(upcon, message)
+		sendToAll(joinAnnouncement)
 
 	} else {
 		return
@@ -83,12 +125,13 @@ func handleConnection(conn net.Conn, upcon net.Conn) {
 	for {
 		// Read the client's input
 		res := scanner.Scan()
-		input := scanner.Text()
+
+		messagesUpstream <- scanner.Text() + "\n"
+		input := <-messagesDownstream
 
 		// handle connection closure
 		if res == false {
 			conn.Close()
-			upcon.Close()
 			fmt.Printf("* '%s' has left the room\n", name)
 			clientsMu.Lock()
 			// Remove the client from the list of active connections
@@ -101,25 +144,21 @@ func handleConnection(conn net.Conn, upcon net.Conn) {
 			clientsMu.Unlock()
 			message := fmt.Sprintf("* '%s' has left the room\n", name)
 
-			sendToAll(message)
-			fmt.Fprintf(upcon, message)
+			sendToAllExceptSender(conn, message)
 			return
 		}
-		if len(input) != 0 {
-			pattern := `\b7\w{25,34}\b`
-			re := regexp.MustCompile(pattern)
-			var message string
+		pattern := `\b7\w{25,34}\b`
+		re := regexp.MustCompile(pattern)
+		var message string
 
-			if re.MatchString(input) {
-				modified := re.ReplaceAllString(input, "7YWHMfk9JZe0LM0g1ZauHuiSxhI")
-				message = fmt.Sprintf("[%s] %s", name, modified)
-			} else {
-				message = fmt.Sprintf("[%s] %s", name, input)
-			}
-			// send upstream
-			sendToAllExceptSender(conn, message)
-			fmt.Fprintf(upcon, message)
+		if re.MatchString(input) {
+			modified := re.ReplaceAllString(input, "7YWHMfk9JZe0LM0g1ZauHuiSxhI")
+			message = fmt.Sprintf("%s", modified)
+		} else {
+			message = fmt.Sprintf("%s", input)
 		}
+		// send downstream
+		sendToAllExceptSender(conn, message)
 	}
 }
 
@@ -150,6 +189,9 @@ func main() {
 	defer listener.Close()
 
 	fmt.Println("Server started. Listening on port 8000...")
+	messagesUpstream := make(chan string)
+	messagesDownstream := make(chan string)
+	initialChannel := make(chan string)
 
 	for {
 		conn, err := listener.Accept()
@@ -159,12 +201,14 @@ func main() {
 		}
 		fmt.Printf("New connection from %s\n", conn.RemoteAddr().String())
 
-		upstreamConn, err := net.Dial("tcp", "chat.protohackers.com:16963")
+		upstreamConn, err := net.Dial("tcp", "localhost:8001")
+		// upstreamConn, err := net.Dial("tcp", "chat.protohackers.com:16963")
 		if err != nil {
 			fmt.Printf("Error in creating upstream: %s\n", err)
 			continue
 		}
 
-		go handleConnection(conn, upstreamConn)
+		go handleConnection(conn, initialChannel, messagesUpstream, messagesDownstream)
+		go handleUpstream(upstreamConn, initialChannel, messagesUpstream, messagesDownstream)
 	}
 }
