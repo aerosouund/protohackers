@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"regexp"
+
+	"go.arsenm.dev/pcre"
 )
 
 func handleConnection(conn net.Conn) {
@@ -50,9 +51,10 @@ func proxy(in net.Conn, out net.Conn) {
 	scanner := bufio.NewScanner(in)
 	for scanner.Scan() {
 		data := scanner.Text() + "\n"
-
+		// \b7\w{25,34}\b
+		// \b7[A-Za-z0-9_]{24,33}\b
 		pattern := `\b7\w{25,34}\b`
-		re := regexp.MustCompile(pattern)
+		re := pcre.MustCompile(pattern)
 		var message string
 
 		if re.MatchString(data) {
