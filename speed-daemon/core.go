@@ -59,6 +59,7 @@ func handleCamera(conn net.Conn) {
 	dist := int(binary.BigEndian.Uint16(buffer[2:4]))
 	limit := int(binary.BigEndian.Uint16(buffer[4:6]))
 	fmt.Println(num, dist, limit)
+	fmt.Println("all the rest ", buffer[6:])
 	var r Road
 	found := false
 
@@ -82,34 +83,57 @@ func handleCamera(conn net.Conn) {
 	requestedHeartbeat := false
 
 	for {
-		messageType := make([]byte, 6)
-
-		// Read bytes from the connection into the buffer
-		_, err := conn.Read(messageType)
-		if err != nil && err != io.EOF {
-			fmt.Println(err)
+		messageType, err := readBytesFromConn(conn, 1)
+		fmt.Println(messageType)
+		if err != nil {
+			break
 		}
-		fmt.Println("received so far", messageType[0:8])
+
 		if messageType[0] == 0x40 && !requestedHeartbeat {
 			fmt.Println("handling a heartbeat")
-			interval := binary.BigEndian.Uint16(messageType[1:5])
+
+			buf, _ := readBytesFromConn(conn, 4)
+			interval := binary.BigEndian.Uint16(buf[0:4])
 			requestedHeartbeat = true
 			go sendHeartBeat(conn, interval)
 		}
 
 		if messageType[0] == 0x20 {
 			fmt.Println("handling an observation")
-			strLen := int(int8(messageType[1]))
+			strLen := make([]byte, 1)
+			_, err := conn.Read(strLen)
+			if err != nil && err != io.EOF {
+				fmt.Println(err)
+			}
 			fmt.Printf("going to parse %d bytes", strLen)
+			buf, _ := readBytesFromConn(conn, int(strLen[0]+4))
 			observation := Observation{
-				Plate:          string(messageType[1:strLen]),
-				Timestamp:      int(binary.BigEndian.Uint32(messageType[strLen : strLen+4])),
+				Plate:          string(buf[:strLen[0]]),
+				Timestamp:      int(binary.BigEndian.Uint32(buf[strLen[0] : strLen[0]+4])),
 				CameraDistance: dist,
 				RoadNum:        num,
 			}
 			go handleObservation(r, observation)
 		}
 	}
+}
+
+func readBytesFromConn(conn net.Conn, n int) ([]byte, error) {
+	buffer := make([]byte, n, n)
+	bytesRead := 0
+
+	for bytesRead < n {
+		numBytesRead, err := conn.Read(buffer[bytesRead:])
+		if err != nil {
+			return nil, err
+		}
+		bytesRead += numBytesRead
+		if bytesRead >= n {
+			break
+		}
+	}
+
+	return buffer, nil
 }
 
 func getLastObservation(r Road, o Observation) Observation {
