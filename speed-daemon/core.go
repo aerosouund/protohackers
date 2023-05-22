@@ -4,38 +4,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"time"
 )
-
-type Observation struct {
-	Plate          string
-	RoadNum        int
-	CameraDistance int
-	Timestamp      int
-}
-
-type Dispatcher struct {
-	Conn  net.Conn
-	Roads []int
-}
-
-type Ticket struct {
-	Plate           string
-	RoadNum         int
-	CameraPosition1 int
-	CameraPosition2 int
-	Timestamp1      int
-	Timestamp2      int
-	Speed           int
-}
-
-type Road struct {
-	RoadNum      int
-	Limit        int
-	Observations map[string][]Observation
-	Dispatchers  []Dispatcher
-}
 
 func getRoad(roadNum int) (Road, bool) {
 	// handle road doesnt exist
@@ -47,17 +19,19 @@ func getRoad(roadNum int) (Road, bool) {
 	return Road{}, false
 }
 
-func sendHeartBeat(conn net.Conn, interval int) {
+func sendHeartBeat(conn net.Conn, interval uint16) {
+	if interval == 0 {
+		return
+	}
 	data, err := hex.DecodeString("41") // decode hex string to byte
 	if err != nil {
 		panic(err)
 	}
 
-	// send the byte every 5 seconds
 	for {
 		_, err = conn.Write(data)
 		if err != nil {
-			panic(err)
+			return
 		}
 		time.Sleep(time.Duration(interval/10) * time.Second)
 	}
@@ -72,7 +46,8 @@ func checkExceededSpeed(limit int, observation Observation, lastObservation Obse
 }
 
 func handleCamera(conn net.Conn) {
-	buffer := make([]byte, 6)
+	fmt.Println("Handling a camera")
+	buffer := make([]byte, 32)
 
 	// Read bytes from the connection into the buffer
 	_, err := conn.Read(buffer)
@@ -107,24 +82,28 @@ func handleCamera(conn net.Conn) {
 	requestedHeartbeat := false
 
 	for {
-		messageType := make([]byte, 24)
+		messageType := make([]byte, 6)
 
 		// Read bytes from the connection into the buffer
 		_, err := conn.Read(messageType)
-		if err != nil {
-			return
+		if err != nil && err != io.EOF {
+			fmt.Println(err)
 		}
-		if int(int8(messageType[0])) == 40 && !requestedHeartbeat {
-			interval := int(binary.BigEndian.Uint16(messageType[1:5]))
+		fmt.Println("received so far", messageType[0:8])
+		if messageType[0] == 0x40 && !requestedHeartbeat {
+			fmt.Println("handling a heartbeat")
+			interval := binary.BigEndian.Uint16(messageType[1:5])
 			requestedHeartbeat = true
 			go sendHeartBeat(conn, interval)
 		}
 
-		if int(int8(messageType[0])) == 20 {
+		if messageType[0] == 0x20 {
+			fmt.Println("handling an observation")
 			strLen := int(int8(messageType[1]))
+			fmt.Printf("going to parse %d bytes", strLen)
 			observation := Observation{
 				Plate:          string(messageType[1:strLen]),
-				Timestamp:      int(binary.BigEndian.Uint16(messageType[strLen : strLen+4])),
+				Timestamp:      int(binary.BigEndian.Uint32(messageType[strLen : strLen+4])),
 				CameraDistance: dist,
 				RoadNum:        num,
 			}
@@ -172,6 +151,7 @@ func insertObservation(r Road, o Observation) {
 }
 
 func handleObservation(r Road, o Observation) {
+	fmt.Println("handling observation for", o.Plate)
 	_, ok := r.Observations[o.Plate]
 	if ok {
 		// get last observation
@@ -221,6 +201,7 @@ func createTicket(speed int, o Observation, lastObs Observation) {
 
 func serializeTicket(t Ticket) []byte {
 	// order: Ticket{plate: "UN1X", road: 123, mile1: 8, timestamp1: 0, mile2: 9, timestamp2: 45, speed: 8000}
+	// will panic because of zero length
 	var serializedTicket []byte
 	serializedTicket = append(serializedTicket, []byte(t.Plate)...)
 	binary.BigEndian.PutUint16(serializedTicket, uint16(t.RoadNum))
@@ -234,7 +215,8 @@ func serializeTicket(t Ticket) []byte {
 }
 
 func handleDispatcher(conn net.Conn) {
-	buffer := make([]byte, 6)
+	fmt.Println("Handling a dispatcher")
+	buffer := make([]byte, 32)
 	_, err := conn.Read(buffer)
 	if err != nil {
 		panic(err)
@@ -280,8 +262,8 @@ func handleDispatcher(conn net.Conn) {
 		if err != nil {
 			return
 		}
-		if int(int8(messageType[0])) == 40 && !requestedHeartbeat {
-			interval := int(binary.BigEndian.Uint16(messageType[1:5]))
+		if messageType[0] == 0x40 && !requestedHeartbeat {
+			interval := binary.BigEndian.Uint16(messageType[3:5])
 			requestedHeartbeat = true
 			go sendHeartBeat(conn, interval)
 		}

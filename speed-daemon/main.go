@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
@@ -12,21 +13,25 @@ var unsentTickets []Ticket
 
 func handleConnection(conn net.Conn) {
 	// check what the first byte is
-	buffer := make([]byte, 1)
+	buffer := make([]byte, 128)
 
 	// Read bytes from the connection into the buffer
 	_, err := conn.Read(buffer)
 	if err != nil {
-		panic(err)
+		return
 	}
 
 	// Parse the bytes into integers
-	startingInt := int(int8(buffer[0]))
-	if startingInt == 80 {
+	startingInt := buffer[0]
+
+	switch startingInt {
+	case 0x80:
 		handleCamera(conn)
-	}
-	if startingInt == 81 {
+	case 0x81:
 		handleDispatcher(conn)
+	case 0x40:
+		interval := binary.BigEndian.Uint16(buffer[3:5])
+		sendHeartBeat(conn, interval)
 	}
 
 }
