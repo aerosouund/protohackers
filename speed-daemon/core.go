@@ -7,19 +7,22 @@ import (
 	"io"
 	"net"
 	"time"
+
+	"golang.org/x/exp/constraints"
 )
 
-func getRoad(roadNum int) (Road, bool) {
+func getRoad(roadNum int) (*Road, bool) {
 	// handle road doesnt exist
 	for _, road := range listOfRoads {
 		if road.RoadNum == roadNum {
+			fmt.Println("found road")
 			return road, true
 		}
 	}
-	return Road{}, false
+	return &Road{}, false
 }
 
-func sendHeartBeat(conn net.Conn, interval uint16) {
+func sendHeartBeat[T constraints.Unsigned](conn net.Conn, interval T) {
 	if interval == 0 {
 		return
 	}
@@ -37,83 +40,94 @@ func sendHeartBeat(conn net.Conn, interval uint16) {
 	}
 }
 
-func checkExceededSpeed(limit int, observation Observation, lastObservation Observation) (bool, int) {
-	speed := (observation.CameraDistance - lastObservation.CameraDistance) / (observation.Timestamp - lastObservation.Timestamp)
-	if speed > limit {
-		return true, speed
+func checkExceededSpeed(limit int, o Observation, lastObs Observation) (bool, float64) {
+
+	if o.Timestamp < lastObs.Timestamp {
+		d := float64(lastObs.CameraDistance - o.CameraDistance)
+		t := float64(lastObs.Timestamp-o.Timestamp) / 60 / 60
+		v := d / t
+		if v > float64(limit) {
+			return true, v
+		}
+		return false, v
+
+	} else {
+		d := float64(o.CameraDistance - lastObs.CameraDistance)
+		t := float64(o.Timestamp-lastObs.Timestamp) / 60 / 60
+		v := d / t
+		if v > float64(limit) {
+			return true, v
+		}
+		return false, v
 	}
-	return false, speed
 }
 
 func handleCamera(conn net.Conn) {
 	fmt.Println("Handling a camera")
-	buffer := make([]byte, 32)
-
-	// Read bytes from the connection into the buffer
-	_, err := conn.Read(buffer)
+	buffer, err := readBytesFromConn(conn, 6)
 	if err != nil {
-		return
+		if err != io.EOF {
+			panic(err)
+		}
 	}
 
 	num := int(binary.BigEndian.Uint16(buffer[0:2]))
 	dist := int(binary.BigEndian.Uint16(buffer[2:4]))
 	limit := int(binary.BigEndian.Uint16(buffer[4:6]))
-	fmt.Println(num, dist, limit)
-	fmt.Println("all the rest ", buffer[6:])
-	var r Road
-	found := false
+	fmt.Println("handling camera with values", num, dist, limit)
 
 	// check if road is in the list of roads
-	for i, _ := range listOfRoads {
-		if listOfRoads[i].RoadNum == num {
-			r = listOfRoads[i]
-			found = true
-		}
-	}
+	r, found := getRoad(num)
 	if !found {
-		r = Road{
+		r := &Road{
 			RoadNum:      num,
 			Limit:        limit,
-			Observations: map[string][]Observation{},
-			Dispatchers:  []Dispatcher{},
+			Observations: make(map[string][]Observation),
+			Dispatchers:  make([]Dispatcher, 0),
 		}
 		listOfRoads = append(listOfRoads, r)
+		fmt.Println("appended road to list of roads")
 	}
 
-	requestedHeartbeat := false
+	// fmt.Println("RoaDDD", r.RoadNum, &conn)
+
+	// requestedHeartbeat := false
 
 	for {
 		messageType, err := readBytesFromConn(conn, 1)
-		fmt.Println(messageType)
+
 		if err != nil {
 			break
 		}
 
-		if messageType[0] == 0x40 && !requestedHeartbeat {
+		switch messageType[0] {
+		case 0x40:
+			// check heartbeat request
 			fmt.Println("handling a heartbeat")
 
 			buf, _ := readBytesFromConn(conn, 4)
 			interval := binary.BigEndian.Uint16(buf[0:4])
-			requestedHeartbeat = true
+			// requestedHeartbeat = true
 			go sendHeartBeat(conn, interval)
-		}
 
-		if messageType[0] == 0x20 {
+		case 0x20:
 			fmt.Println("handling an observation")
 			strLen := make([]byte, 1)
 			_, err := conn.Read(strLen)
 			if err != nil && err != io.EOF {
 				fmt.Println(err)
 			}
-			fmt.Printf("going to parse %d bytes", strLen)
+
 			buf, _ := readBytesFromConn(conn, int(strLen[0]+4))
-			observation := Observation{
+			o := Observation{
 				Plate:          string(buf[:strLen[0]]),
 				Timestamp:      int(binary.BigEndian.Uint32(buf[strLen[0] : strLen[0]+4])),
 				CameraDistance: dist,
 				RoadNum:        num,
 			}
-			go handleObservation(r, observation)
+			fmt.Println("observation timestamp", o.Timestamp)
+			go handleObservation(r, o)
+
 		}
 	}
 }
@@ -136,7 +150,7 @@ func readBytesFromConn(conn net.Conn, n int) ([]byte, error) {
 	return buffer, nil
 }
 
-func getLastObservation(r Road, o Observation) Observation {
+func getLastObservation(r *Road, o Observation) Observation {
 	// may have bugs and missing edge cases
 	lastObs := Observation{Timestamp: 0}
 	if len(r.Observations[o.Plate]) == 1 {
@@ -150,32 +164,41 @@ func getLastObservation(r Road, o Observation) Observation {
 	return lastObs
 }
 
-func insertObservation(r Road, o Observation) {
+func insertObservation(r *Road, o Observation) {
 	// may have bugs and missing edge cases
 	if len(r.Observations[o.Plate]) == 1 {
-		//handle length of 1
+		if r.Observations[o.Plate][0].Timestamp > o.Timestamp {
+			newObservations := []Observation{o, r.Observations[o.Plate][0]}
+			r.Observations[o.Plate] = newObservations
+			fmt.Println("observation inserted before")
+			return
+		}
+		r.Observations[o.Plate] = append(r.Observations[o.Plate], o)
+		fmt.Println("observation inserted after")
+		return
 
 	}
 	for i, _ := range r.Observations[o.Plate] {
 		if i+1 > len(r.Observations[o.Plate]) {
-			r.Observations[o.Plate] = append(r.Observations[o.Plate], o)
 			// insert at the end
+			r.Observations[o.Plate] = append(r.Observations[o.Plate], o)
 		}
 		if r.Observations[o.Plate][i].Timestamp <= o.Timestamp && r.Observations[o.Plate][i+1].Timestamp > o.Timestamp {
+			// insert at that index
 			var newObservations []Observation
 			copy(r.Observations[o.Plate][:i], newObservations)
 			newObservations[i] = o
 			copy(r.Observations[o.Plate][i+1:], newObservations)
 
 			r.Observations[o.Plate] = newObservations
-
-			// insert at that index
+			return
 		}
 	}
 }
 
-func handleObservation(r Road, o Observation) {
+func handleObservation(r *Road, o Observation) {
 	fmt.Println("handling observation for", o.Plate)
+	fmt.Println("workign with road", r)
 	_, ok := r.Observations[o.Plate]
 	if ok {
 		// get last observation
@@ -184,16 +207,22 @@ func handleObservation(r Road, o Observation) {
 		insertObservation(r, o)
 
 		if exceeded {
-			createTicket(speed, o, lastObservation)
+			fmt.Println("car exceeded speed, creating ticket")
+			createTicket(int(speed), o, lastObservation)
 		}
 
 	} else {
-		r.Observations[o.Plate] = []Observation{}
+		if r.Observations == nil {
+			fmt.Println("The map is nil!!!")
+		}
+		r.Observations[o.Plate] = make([]Observation, 0)
 		r.Observations[o.Plate] = append(r.Observations[o.Plate], o)
+		fmt.Println("created plate key")
 	}
 }
 
 func createTicket(speed int, o Observation, lastObs Observation) {
+	fmt.Println("creating ticket")
 	t := Ticket{
 		Plate:           o.Plate,
 		RoadNum:         o.RoadNum,
@@ -204,14 +233,13 @@ func createTicket(speed int, o Observation, lastObs Observation) {
 		Speed:           speed,
 	}
 	r, _ := getRoad(o.RoadNum)
+	fmt.Println("Creating ticket for road", r.RoadNum)
 
 	// if there isnt dispatchers
 	if len(r.Dispatchers) == 0 {
 		unsentTickets = append(unsentTickets, t)
 	}
-	// if road has no dispatchers {
 
-	//}
 	d := r.Dispatchers[0]
 
 	// encode the ticket to bytes before
@@ -226,7 +254,8 @@ func createTicket(speed int, o Observation, lastObs Observation) {
 func serializeTicket(t Ticket) []byte {
 	// order: Ticket{plate: "UN1X", road: 123, mile1: 8, timestamp1: 0, mile2: 9, timestamp2: 45, speed: 8000}
 	// will panic because of zero length
-	var serializedTicket []byte
+	var arrayLength int = len(t.Plate) + 16
+	var serializedTicket = make([]byte, arrayLength, arrayLength)
 	serializedTicket = append(serializedTicket, []byte(t.Plate)...)
 	binary.BigEndian.PutUint16(serializedTicket, uint16(t.RoadNum))
 	binary.BigEndian.PutUint16(serializedTicket, uint16(t.CameraPosition1))
@@ -240,18 +269,30 @@ func serializeTicket(t Ticket) []byte {
 
 func handleDispatcher(conn net.Conn) {
 	fmt.Println("Handling a dispatcher")
-	buffer := make([]byte, 32)
-	_, err := conn.Read(buffer)
+
+	numRoadsBytes, err := readBytesFromConn(conn, 1)
 	if err != nil {
-		panic(err)
+		if err != io.EOF {
+			panic(err)
+		}
 	}
 
-	numRoads := int(buffer[0])
-	roads := []int{}
-	for i := 1; i < numRoads-2; i += 2 {
-		r := int(binary.BigEndian.Uint16(buffer[i : i+2]))
-		roads = append(roads, r)
+	numRoads := int(numRoadsBytes[0])
+
+	roadsBytes, err := readBytesFromConn(conn, numRoads*2)
+	if err != nil {
+		if err != io.EOF {
+			panic(err)
+		}
 	}
+
+	roads := make([]int, len(roadsBytes)/2)
+
+	for i := 0; i < len(roadsBytes)-1; i++ {
+		roads[i] = int(binary.BigEndian.Uint16(roadsBytes[i*2 : i*2+2]))
+	}
+
+	fmt.Println("handling a dispatcher with values", numRoads, roads)
 	var requestedHeartbeat bool
 
 	d := Dispatcher{
@@ -259,23 +300,24 @@ func handleDispatcher(conn net.Conn) {
 		Roads: roads,
 	}
 
-	for i, t := range unsentTickets {
-		for _, r := range d.Roads {
-			if t.RoadNum == r {
-				unsentTickets = append(unsentTickets[:i], unsentTickets[i+1:]...)
-				// encode to bytes first
-				st := serializeTicket(t)
-				_, err := conn.Write(st)
-				if err != nil {
-					panic(err)
-				}
-			}
-		}
-	}
+	// for i, t := range unsentTickets {
+	// 	for _, r := range d.Roads {
+	// 		if t.RoadNum == r {
+	// 			unsentTickets = append(unsentTickets[:i], unsentTickets[i+1:]...)
+	// 			// encode to bytes first
+	// 			st := serializeTicket(t)
+	// 			_, err := conn.Write(st)
+	// 			if err != nil {
+	// 				panic(err)
+	// 			}
+	// 		}
+	// 	}
+	// }
 
-	for roadNum, _ := range d.Roads {
+	for _, roadNum := range d.Roads {
 		r, _ := getRoad(roadNum)
 		r.Dispatchers = append(r.Dispatchers, d)
+		fmt.Println("appended dispatcher to road number", r.RoadNum)
 	}
 
 	for {
@@ -297,81 +339,3 @@ func handleDispatcher(conn net.Conn) {
 func checkTicketSentToday() {
 
 }
-
-// function that sends heartbeat
-
-/*
-
-   func handleDispatcher(conn){
-   	numroads := int(bytesOfNumRoadsField)
-   	roads := []int(bytesOfRoadsField)
-   	var requestedHeartBeat bool
-
-   	d := Dispatcher {
-   		conn
-   		roads
-   	}
-
-   	for ticket in unsentTickets {
-   		if ticket.road in d.roads {
-   			t := ticket
-   			unsentTickets.pop(ticket)
-   			fmt.Fprintf(conn, ticket)
-   		}
-   	}
-
-   	for roadNum in roads {
-   		r := getRoad(roadNum)
-   		r.dispatchers.append(d)
-
-   	if wantHeartBeat & !requestedHeartBeat {
-   		requestedHeartBeat = true
-   		sendHeartBeat()
-   	}
-   }
-
-   // handle tickets in the same day
-
-   func handleObservation(road, observation) {
-   	if observation.car in road.observations.keys {
-   		// get last observation
-   		exceeded := checkExceededSpeed(speedLimit, observation, lastObservation)
-   		insertObservation(road, observation)
-
-   		if exceeded {
-   			createTicket(observation, lastObservation)
-   		}
-
-   	} else {
-   		road.observations[observation.car] = []
-   		road.observations[observation.car].append(observation)
-   	}
-   }
-
-   func checkExceededSpeed(limit int, observation Observation, lastObservation Observation) {
-   	speed := (observation.cameraDist - lastObservation.cameraDist) / (observation.timestamp - lastObservation.timestamp)
-   	if speed > limit {
-   		return true, speed
-   	}
-   	return false, speed
-   }
-
-   func createTicket(speed, observation Observation, lastObservation Observation) {
-   	t := Ticket{
-   		car observation.Car
-   		road observation.Road
-   		cameraPosition1 lastObservation.cameraDist
-   		cameraPosition2 observation.cameraDist
-   		timestamp1 lastObservation.timestamp
-   		timestamp2 observation.timestamp
-   		speed speed
-   	}
-   	r := getRoad(observation.RoadId)
-   	// if road has no dispatchers {
-   		upsentTickets.append(t)
-   	}
-   	d := r.dispatchers[0]
-   	fmt.Fprint(d.conn, ticket)
-   }
-
-*/

@@ -3,22 +3,22 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 )
 
 // validate message and if invalid send err
-var listOfRoads []Road
+var listOfRoads []*Road
 var unsentTickets []Ticket
 
 func handleConnection(conn net.Conn) {
 	// check what the first byte is
-	buffer := make([]byte, 128)
-
-	// Read bytes from the connection into the buffer
-	_, err := conn.Read(buffer)
+	buffer, err := readBytesFromConn(conn, 1)
 	if err != nil {
-		return
+		if err != io.EOF {
+			panic(err)
+		}
 	}
 
 	// Parse the bytes into integers
@@ -30,10 +30,18 @@ func handleConnection(conn net.Conn) {
 	case 0x81:
 		handleDispatcher(conn)
 	case 0x40:
-		interval := binary.BigEndian.Uint16(buffer[3:5])
+		fmt.Println("handling heartbeat")
+
+		b, err := readBytesFromConn(conn, 4)
+		if err != nil {
+			if err != io.EOF {
+				panic(err)
+			}
+		}
+
+		interval := binary.BigEndian.Uint16(b[2:4])
 		sendHeartBeat(conn, interval)
 	}
-
 }
 
 func main() {
