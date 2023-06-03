@@ -1,6 +1,8 @@
 package main
 
-import "net"
+import (
+	"net"
+)
 
 type Observation struct {
 	Plate          string
@@ -16,17 +18,17 @@ type Dispatcher struct {
 
 type Ticket struct {
 	Plate           string
-	RoadNum         int
-	CameraPosition1 int
-	CameraPosition2 int
-	Timestamp1      int
-	Timestamp2      int
-	Speed           int
+	RoadNum         uint16
+	CameraPosition1 uint16
+	CameraPosition2 uint16
+	Timestamp1      uint32
+	Timestamp2      uint32
+	Speed           uint16
 }
 
 type Road struct {
 	RoadNum      int
 	Limit        int
 	Observations map[string][]Observation
-	Dispatchers  []Dispatcher
+	Dispatchers  []*Dispatcher
 }

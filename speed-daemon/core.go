@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"reflect"
 	"time"
 
 	"golang.org/x/exp/constraints"
@@ -15,7 +16,6 @@ func getRoad(roadNum int) (*Road, bool) {
 	// handle road doesnt exist
 	for _, road := range listOfRoads {
 		if road.RoadNum == roadNum {
-			fmt.Println("found road")
 			return road, true
 		}
 	}
@@ -77,19 +77,22 @@ func handleCamera(conn net.Conn) {
 	fmt.Println("handling camera with values", num, dist, limit)
 
 	// check if road is in the list of roads
-	r, found := getRoad(num)
+	var (
+		r     *Road
+		found bool
+	)
+
+	r, found = getRoad(num)
 	if !found {
-		r := &Road{
+		r = &Road{
 			RoadNum:      num,
 			Limit:        limit,
 			Observations: make(map[string][]Observation),
-			Dispatchers:  make([]Dispatcher, 0),
+			Dispatchers:  make([]*Dispatcher, 0),
 		}
 		listOfRoads = append(listOfRoads, r)
 		fmt.Println("appended road to list of roads")
 	}
-
-	// fmt.Println("RoaDDD", r.RoadNum, &conn)
 
 	// requestedHeartbeat := false
 
@@ -198,7 +201,6 @@ func insertObservation(r *Road, o Observation) {
 
 func handleObservation(r *Road, o Observation) {
 	fmt.Println("handling observation for", o.Plate)
-	fmt.Println("workign with road", r)
 	_, ok := r.Observations[o.Plate]
 	if ok {
 		// get last observation
@@ -208,13 +210,15 @@ func handleObservation(r *Road, o Observation) {
 
 		if exceeded {
 			fmt.Println("car exceeded speed, creating ticket")
-			createTicket(int(speed), o, lastObservation)
+			if o.Timestamp > lastObservation.Timestamp {
+				createTicket(int(speed), o, lastObservation)
+			} else {
+				createTicket(int(speed), lastObservation, o)
+			}
+
 		}
 
 	} else {
-		if r.Observations == nil {
-			fmt.Println("The map is nil!!!")
-		}
 		r.Observations[o.Plate] = make([]Observation, 0)
 		r.Observations[o.Plate] = append(r.Observations[o.Plate], o)
 		fmt.Println("created plate key")
@@ -222,22 +226,23 @@ func handleObservation(r *Road, o Observation) {
 }
 
 func createTicket(speed int, o Observation, lastObs Observation) {
-	fmt.Println("creating ticket")
 	t := Ticket{
 		Plate:           o.Plate,
-		RoadNum:         o.RoadNum,
-		CameraPosition1: lastObs.CameraDistance,
-		CameraPosition2: o.CameraDistance,
-		Timestamp1:      lastObs.Timestamp,
-		Timestamp2:      o.Timestamp,
-		Speed:           speed,
+		RoadNum:         uint16(o.RoadNum),
+		CameraPosition1: uint16(lastObs.CameraDistance),
+		CameraPosition2: uint16(o.CameraDistance),
+		Timestamp1:      uint32(lastObs.Timestamp),
+		Timestamp2:      uint32(o.Timestamp),
+		Speed:           uint16(speed * 100),
 	}
+
 	r, _ := getRoad(o.RoadNum)
-	fmt.Println("Creating ticket for road", r.RoadNum)
+	fmt.Println("Creating ticket", t)
 
 	// if there isnt dispatchers
 	if len(r.Dispatchers) == 0 {
 		unsentTickets = append(unsentTickets, t)
+		return
 	}
 
 	d := r.Dispatchers[0]
@@ -248,28 +253,38 @@ func createTicket(speed int, o Observation, lastObs Observation) {
 	if err != nil {
 		panic(err)
 	}
-
+	fmt.Println("wrote ticket")
+	return
 }
 
 func serializeTicket(t Ticket) []byte {
-	// order: Ticket{plate: "UN1X", road: 123, mile1: 8, timestamp1: 0, mile2: 9, timestamp2: 45, speed: 8000}
-	// will panic because of zero length
-	var arrayLength int = len(t.Plate) + 16
-	var serializedTicket = make([]byte, arrayLength, arrayLength)
-	serializedTicket = append(serializedTicket, []byte(t.Plate)...)
-	binary.BigEndian.PutUint16(serializedTicket, uint16(t.RoadNum))
-	binary.BigEndian.PutUint16(serializedTicket, uint16(t.CameraPosition1))
-	binary.BigEndian.PutUint32(serializedTicket, uint32(t.Timestamp1))
-	binary.BigEndian.PutUint16(serializedTicket, uint16(t.CameraPosition2))
-	binary.BigEndian.PutUint32(serializedTicket, uint32(t.Timestamp2))
-	binary.BigEndian.PutUint16(serializedTicket, uint16(t.Speed))
+	structFields := []any{t.Plate, t.RoadNum, t.CameraPosition1, t.Timestamp1, t.CameraPosition2, t.Timestamp2, t.Speed}
 
+	var serializedTicket = make([]byte, 1)
+	serializedTicket[0] = 0x21
+
+	for _, field := range structFields {
+		switch reflect.TypeOf(field).Kind() {
+		case reflect.String:
+			serializedTicket = append(serializedTicket, byte(len(field.(string))))
+			serializedTicket = append(serializedTicket, []byte(field.(string))...)
+
+		case reflect.Uint16:
+			Uint16Field := make([]byte, 2)
+			binary.BigEndian.PutUint16(Uint16Field, field.(uint16))
+			serializedTicket = append(serializedTicket, Uint16Field...)
+
+		case reflect.Uint32:
+			Uint32Field := make([]byte, 4)
+			binary.BigEndian.PutUint32(Uint32Field, field.(uint32))
+			serializedTicket = append(serializedTicket, Uint32Field...)
+		}
+	}
+	fmt.Println(serializedTicket)
 	return serializedTicket
 }
 
 func handleDispatcher(conn net.Conn) {
-	fmt.Println("Handling a dispatcher")
-
 	numRoadsBytes, err := readBytesFromConn(conn, 1)
 	if err != nil {
 		if err != io.EOF {
@@ -295,24 +310,26 @@ func handleDispatcher(conn net.Conn) {
 	fmt.Println("handling a dispatcher with values", numRoads, roads)
 	var requestedHeartbeat bool
 
-	d := Dispatcher{
+	d := &Dispatcher{
 		Conn:  conn,
 		Roads: roads,
 	}
 
-	// for i, t := range unsentTickets {
-	// 	for _, r := range d.Roads {
-	// 		if t.RoadNum == r {
-	// 			unsentTickets = append(unsentTickets[:i], unsentTickets[i+1:]...)
-	// 			// encode to bytes first
-	// 			st := serializeTicket(t)
-	// 			_, err := conn.Write(st)
-	// 			if err != nil {
-	// 				panic(err)
-	// 			}
-	// 		}
-	// 	}
-	// }
+	for i, t := range unsentTickets {
+		for _, r := range d.Roads {
+			if int(t.RoadNum) == r {
+				unsentTickets = append(unsentTickets[:i], unsentTickets[i+1:]...)
+				// encode to bytes first
+				st := serializeTicket(t)
+				fmt.Println("serialized ticket to", st[0:2])
+				_, err := conn.Write(st)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Println("authored ticket")
+			}
+		}
+	}
 
 	for _, roadNum := range d.Roads {
 		r, _ := getRoad(roadNum)
