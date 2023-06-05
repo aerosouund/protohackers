@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -14,6 +15,11 @@ var unsentTickets []Ticket
 
 func handleConnection(conn net.Conn) {
 	// check what the first byte is
+	tt := NewTracker()
+
+	ctx := context.Background()
+	ctxWithVal := context.WithValue(ctx, "tracker", tt)
+
 	buffer, err := readBytesFromConn(conn, 1)
 	if err != nil {
 		if err != io.EOF {
@@ -26,7 +32,7 @@ func handleConnection(conn net.Conn) {
 
 	switch startingInt {
 	case 0x80:
-		handleCamera(conn)
+		handleCamera(ctxWithVal, conn)
 	case 0x81:
 		handleDispatcher(conn)
 	case 0x40:
