@@ -332,9 +332,6 @@ func reverse(str string) string {
 		byte_str[i], byte_str[j] = byte_str[j], byte_str[i]
 	}
 
-	// if string(byte_str[0]) == "\n" {
-	// 	byte_str = byte_str[1:]
-	// }
 	byte_str = append(byte_str, '\n')
 
 	return string(byte_str)
