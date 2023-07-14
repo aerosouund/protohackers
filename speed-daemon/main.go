@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -12,13 +11,11 @@ import (
 // validate message and if invalid send err
 var listOfRoads []*Road
 var unsentTickets []Ticket
+var tt *TicketTracker
 
 func handleConnection(conn net.Conn) {
 	// check what the first byte is
-	tt := NewTracker()
-
-	ctx := context.Background()
-	ctxWithVal := context.WithValue(ctx, "tracker", tt)
+	tt = NewTracker()
 
 	buffer, err := readBytesFromConn(conn, 1)
 	if err != nil {
@@ -32,7 +29,7 @@ func handleConnection(conn net.Conn) {
 
 	switch startingInt {
 	case 0x80:
-		handleCamera(ctxWithVal, conn)
+		handleCamera(conn)
 	case 0x81:
 		handleDispatcher(conn)
 	case 0x40:

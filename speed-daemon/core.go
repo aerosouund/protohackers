@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
@@ -64,7 +63,7 @@ func checkExceededSpeed(limit int, o Observation, lastObs Observation) (bool, fl
 	}
 }
 
-func handleCamera(ctx context.Context, conn net.Conn) {
+func handleCamera(conn net.Conn) {
 	fmt.Println("Handling a camera")
 	buffer, err := readBytesFromConn(conn, 6)
 	if err != nil {
@@ -98,7 +97,7 @@ func handleCamera(ctx context.Context, conn net.Conn) {
 			RoadNum:      num,
 			Limit:        limit,
 			Observations: make(map[string][]Observation),
-			Dispatchers:  []*Dispatcher{},
+			Dispatchers:  []Dispatcher{},
 		}
 		listOfRoads = append(listOfRoads, r)
 		fmt.Println("appended road to list of roads")
@@ -139,7 +138,7 @@ func handleCamera(ctx context.Context, conn net.Conn) {
 				RoadNum:        num,
 			}
 			fmt.Println("observation timestamp", o.Timestamp)
-			go handleObservation(ctx, r, o)
+			go handleObservation(r, o)
 
 		}
 	}
@@ -211,9 +210,9 @@ func insertObservation(r *Road, o Observation) {
 	}
 }
 
-func handleObservation(ctx context.Context, r *Road, o Observation) {
+func handleObservation(r *Road, o Observation) {
 	fmt.Println("handling observation for", o.Plate)
-	tt := ctx.Value("tracker").(*TicketTracker)
+	fmt.Println(tt)
 	_, ok := r.Observations[o.Plate]
 	if ok {
 		// get last observation
@@ -239,7 +238,7 @@ func handleObservation(ctx context.Context, r *Road, o Observation) {
 				tt.mu.Unlock()
 			}
 			if o.Timestamp+86400 > val {
-				fmt.Sprintf("%d, %d", val, o.Timestamp)
+				fmt.Printf("%d, %d\n", val, o.Timestamp)
 				createTicket(int(speed), so[1], so[0])
 
 				tt.mu.Lock()
@@ -341,21 +340,26 @@ func handleDispatcher(conn net.Conn) {
 	fmt.Println("handling a dispatcher with values", numRoads, roads)
 	var requestedHeartbeat bool
 
-	d := &Dispatcher{
+	d := Dispatcher{
 		Conn:  conn,
 		Roads: roads,
 	}
 
-	for i, t := range unsentTickets {
+	for _, t := range unsentTickets {
 		for _, r := range d.Roads {
 			if int(t.RoadNum) == r {
-				unsentTickets = append(unsentTickets[:i], unsentTickets[i+1:]...)
+				fmt.Println("may error here")
+				// unsentTickets = append(unsentTickets[:i], unsentTickets[i+1:]...)
 				// encode to bytes first
 				st := serializeTicket(t)
 				_, err := conn.Write(st)
 				if err != nil {
 					panic(err)
 				}
+
+				tt.mu.Lock()
+				tt.SentTickets[t.Plate] = int(t.Timestamp2)
+				tt.mu.Unlock()
 				fmt.Println("authored ticket")
 			}
 		}

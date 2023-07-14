@@ -43,7 +43,7 @@ type Road struct {
 	RoadNum      int
 	Limit        int
 	Observations map[string][]Observation // create a way to sort a list of obervation
-	Dispatchers  []*Dispatcher
+	Dispatchers  []Dispatcher
 }
 
 type SortedObservations []Observation
