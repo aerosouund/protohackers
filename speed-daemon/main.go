@@ -14,8 +14,6 @@ var unsentTickets []Ticket
 var tt *TicketTracker
 
 func handleConnection(conn net.Conn) {
-	// check what the first byte is
-	tt = NewTracker()
 
 	buffer, err := readBytesFromConn(conn, 1)
 	if err != nil {
@@ -56,6 +54,7 @@ func main() {
 	defer listener.Close()
 
 	fmt.Println("Server started. Listening on port 8000...")
+	tt = NewTracker()
 
 	for {
 		conn, err := listener.Accept()
