@@ -7,11 +7,15 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 )
 
-// max heap
+var ErrMap = map[string]any{
+	"status": "error",
+}
 
 type Queue struct {
+	LookupMu   sync.Mutex
 	JobsLookup map[string]*Job
 
 	JobsMu      sync.Mutex
@@ -23,15 +27,18 @@ func (q *Queue) PutJob(j *Job) {
 	q.JobsLookup[j.ID] = j
 	q.JobsMu.Lock()
 	q.JobsOrdered = append(q.JobsOrdered, *j)
-	q.JobsMu.Unlock()
 	sort.Sort(q.JobsOrdered)
+	q.JobsMu.Unlock()
 }
 
 func (q *Queue) GetJob() *Job {
+	defer q.JobsMu.Unlock()
 	if len(q.JobsOrdered) == 0 {
 		return nil
 	}
 	n := 0
+
+	q.JobsMu.Lock()
 	for i := 0; i < q.JobsOrdered.Len(); i++ {
 		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" {
 			n += 1
@@ -39,17 +46,28 @@ func (q *Queue) GetJob() *Job {
 			return q.JobsLookup[q.JobsOrdered[n].ID]
 		}
 	}
-	return nil // should this order be reversed ?
+	return nil
 }
 
 func (q *Queue) DeleteJob(id string) error {
 	if len(q.JobsOrdered) == 1 && q.JobsOrdered[0].ID == id {
+		q.LookupMu.Lock()
+		// delete(q.JobsLookup, id)
+		q.LookupMu.Unlock()
+
 		q.JobsOrdered = SortedJobs{}
 	}
 
 	for i, _ := range q.JobsOrdered {
 		if q.JobsOrdered[i].ID == id {
+			fmt.Printf("job found with id %v in index %d\n", id, i)
+			q.JobsMu.Lock()
 			q.JobsOrdered = append(q.JobsOrdered[:i], q.JobsOrdered[i+1:]...)
+			q.JobsMu.Unlock()
+
+			q.LookupMu.Lock()
+			// delete(q.JobsLookup, id)
+			q.LookupMu.Unlock()
 			return nil
 		}
 	}
@@ -82,7 +100,8 @@ type Job struct {
 }
 
 func NewJob(pri int, body map[string]interface{}, queue string) *Job {
-	id := rand.Intn(100000)
+	rand.Seed(time.Now().UnixNano())
+	id := rand.Intn(1000000000000)
 	return &Job{
 		ID:       strconv.Itoa(id),
 		Priority: pri,

@@ -21,6 +21,8 @@ func handleConnection(conn net.Conn, clientExitChan chan struct{}) {
 		err := validateMessage(b)
 		if err != nil {
 			fmt.Println(err.Error())
+			write(conn, types.ErrMap)
+			continue
 		} else {
 			handleMessage(clientExitChan, clientAddr, b, respCh, conn)
 		}
