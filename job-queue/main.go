@@ -14,7 +14,6 @@ func handleConnection(conn net.Conn, clientExitChan chan struct{}) {
 
 	clientAddr := conn.RemoteAddr().String()
 	respCh := make(chan map[string]any)
-	// go writer(conn, respCh, clientExitChan)
 	go aborter(conn.RemoteAddr().String(), clientExitChan)
 
 	for s := bufio.NewScanner(conn); s.Scan(); {
@@ -23,7 +22,7 @@ func handleConnection(conn net.Conn, clientExitChan chan struct{}) {
 		if err != nil {
 			fmt.Println(err.Error())
 		} else {
-			go handleMessage(clientExitChan, clientAddr, b, respCh, conn)
+			handleMessage(clientExitChan, clientAddr, b, respCh, conn)
 		}
 	}
 	close(clientExitChan)
@@ -47,12 +46,8 @@ func main() {
 			continue
 		}
 		fmt.Printf("New connection from %s\n", conn.RemoteAddr().String())
-		// clientAddr := conn.RemoteAddr().String()
 
 		clientExitChan := make(chan struct{})
-
-		// go checkAlive(conn, clientExitChan)
-		// go aborter(clientAddr, clientExitChan)
 		go handleConnection(conn, clientExitChan)
 	}
 }
