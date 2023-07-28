@@ -7,7 +7,6 @@ import (
 	"jobs/types"
 	"net"
 	"strconv"
-	"time"
 )
 
 func validateMessage(messageBytes []byte) error {
@@ -54,7 +53,7 @@ func validateMessage(messageBytes []byte) error {
 	return nil
 }
 
-func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes []byte, respCh chan map[string]any) (map[string]any, error) {
+func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes []byte, respCh chan map[string]any, conn net.Conn) {
 	message := string(messageBytes)
 	fmt.Println(message)
 	var messageJson map[string]any
@@ -84,10 +83,15 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		resp := make(map[string]any)
 		if len(js) == 0 && messageJson["wait"] != true {
 			resp["status"] = "no-job"
-			return resp, nil
+			write(conn, resp)
+			return
+			// return resp, nil
 		}
 		if len(js) == 0 && messageJson["wait"] == true {
 			j := waitOnJobs(clientExitChan, stringQueues)
+			if j == nil {
+				return
+			}
 			js = append(js, j)
 		}
 		var maxPriJob = &types.Job{Priority: 0}
@@ -113,8 +117,9 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		maxPriJob.ClientMu.Unlock()
 
 		resp = types.NewResponse("ok", maxPriJob.Queue, maxPriJob.ID, maxPriJob.Priority, maxPriJob.Body)
+		write(conn, resp)
 
-		return resp, nil
+		// return resp, nil
 
 	case "put":
 		j := types.NewJob(int(messageJson["pri"].(float64)), messageJson["job"].(map[string]interface{}), messageJson["queue"].(string))
@@ -129,7 +134,9 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		resp := make(map[string]any)
 		resp["id"] = j.ID
 		resp["status"] = "ok"
-		return resp, nil
+		write(conn, resp)
+
+		// return resp, nil
 
 	case "abort":
 		// converting the float to a string index
@@ -142,11 +149,15 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		resp["id"] = id
 		if !ok {
 			resp["status"] = "no-job"
-			return resp, nil
+			write(conn, resp)
+
+			// return resp, nil
 		}
 		j.Client = ""
 		resp["status"] = "ok"
-		return resp, nil
+		write(conn, resp)
+
+		// return resp, nil
 
 	case "delete":
 		id := strconv.FormatFloat(messageJson["id"].(float64), 'f', -1, 64) // converting the float to a string index
@@ -155,7 +166,9 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		j, ok := qm.JobsInProgress[clientAddr][id] // check if this client is handling this job id
 		if !ok {
 			resp["status"] = "no-job"
-			return resp, nil
+			write(conn, resp)
+
+			// return resp, nil
 		}
 
 		delete(qm.JobsInProgress[clientAddr], id)
@@ -164,9 +177,11 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 
 		resp["id"] = id
 		resp["status"] = "ok"
-		return resp, nil
+		write(conn, resp)
+
+		// return resp, nil
 	}
-	return nil, types.ErrRequestNotSupported
+	// return nil, types.ErrRequestNotSupported
 }
 
 func waitOnJobs(clientExitChan chan struct{}, queues []string) *types.Job {
@@ -178,13 +193,13 @@ func waitOnJobs(clientExitChan chan struct{}, queues []string) *types.Job {
 	for _, queuename := range queues {
 		go waitOnQueue(ctx, queuename, jobCh, clientExitChan)
 	}
-	close(clientExitChan)
 
 	for {
 		select {
 		case <-clientExitChan:
 			fmt.Println("canceling goroutines")
 			cancel()
+			return nil
 		case j := <-jobCh:
 			return j
 		}
@@ -193,11 +208,12 @@ func waitOnJobs(clientExitChan chan struct{}, queues []string) *types.Job {
 
 func waitOnQueue(ctx context.Context, queueName string, jobCh chan<- *types.Job, clientExitChan <-chan struct{}) {
 	// prevent goroutines from leaking if the client cancelled
+	fmt.Println("starting wait on jobs")
 	for {
 		select {
-		case <-clientExitChan:
-			fmt.Println("canceling goroutines")
-			return
+		// case <-clientExitChan:
+		// 	fmt.Println("canceling goroutines")
+		// 	return
 		case <-ctx.Done():
 			fmt.Println("goroutine exiting")
 			return
@@ -214,25 +230,6 @@ func waitOnQueue(ctx context.Context, queueName string, jobCh chan<- *types.Job,
 	}
 }
 
-func checkAlive(conn net.Conn, clientExitChan chan struct{}) {
-	for {
-		time.Sleep(time.Second * 1)
-		conn.SetWriteDeadline(time.Now().Add(time.Millisecond * 1))
-
-		_, err := conn.Write([]byte{0x00})
-
-		if err != nil {
-			// Check if the error is a timeout error
-			if _, ok := err.(*net.OpError); ok {
-				fmt.Printf("error")
-				// close(clientExitChan)
-				fmt.Println("closed channel")
-				return
-			}
-		}
-	}
-}
-
 func aborter(clientAddr string, clientExitChan chan struct{}) {
 	<-clientExitChan
 	clientJobs := qm.JobsInProgress[clientAddr]
@@ -242,4 +239,21 @@ func aborter(clientAddr string, clientExitChan chan struct{}) {
 		v.ClientMu.Unlock()
 	}
 	delete(qm.JobsInProgress, clientAddr)
+}
+
+// conn net.Conn, respCh chan map[string]any, clientExitChan chan struct{}
+func write(conn net.Conn, r map[string]any) {
+	responseJson, _ := json.Marshal(r)
+	fmt.Fprintf(conn, string(responseJson)+"\n")
+	// for {
+	// 	select {
+	// 	case <-clientExitChan:
+	// 		fmt.Println("writer exiting")
+	// 		return
+	// 	case r := <-respCh:
+	// 		time.Sleep(time.Millisecond * 5)
+	// 		responseJson, _ := json.Marshal(r)
+	// 		fmt.Fprintf(conn, string(responseJson)+"\n")
+	// 	}
+	// }
 }

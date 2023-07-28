@@ -12,7 +12,9 @@ import (
 // max heap
 
 type Queue struct {
-	JobsLookup  map[string]*Job
+	JobsLookup map[string]*Job
+
+	JobsMu      sync.Mutex
 	JobsOrdered SortedJobs
 	Heap        []int
 }
@@ -72,7 +74,9 @@ func NewResponse(status, queue, id string, pri int, job map[string]interface{}) 
 
 func (q *Queue) PutJob(j *Job) {
 	q.JobsLookup[j.ID] = j
+	q.JobsMu.Lock()
 	q.JobsOrdered = append(q.JobsOrdered, *j)
+	q.JobsMu.Unlock()
 	sort.Sort(q.JobsOrdered)
 }
 

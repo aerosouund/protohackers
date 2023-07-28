@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"jobs/types"
 	"net"
@@ -12,9 +11,11 @@ import (
 var qm *types.QueueManager
 
 func handleConnection(conn net.Conn, clientExitChan chan struct{}) {
-	defer close(clientExitChan)
+
 	clientAddr := conn.RemoteAddr().String()
 	respCh := make(chan map[string]any)
+	// go writer(conn, respCh, clientExitChan)
+	go aborter(conn.RemoteAddr().String(), clientExitChan)
 
 	for s := bufio.NewScanner(conn); s.Scan(); {
 		b := s.Bytes()
@@ -22,27 +23,10 @@ func handleConnection(conn net.Conn, clientExitChan chan struct{}) {
 		if err != nil {
 			fmt.Println(err.Error())
 		} else {
-			go handleMessage(clientExitChan, clientAddr, b, respCh)
-			go writer(conn, respCh, clientExitChan)
-			// if err != nil {
-			// 	fmt.Println(err)
-			// }
-			// r := <-respCh
-			// responseJson, _ := json.Marshal(r)
-			// fmt.Fprintf(conn, string(responseJson)+"\n")
+			go handleMessage(clientExitChan, clientAddr, b, respCh, conn)
 		}
 	}
-}
-
-func writer(conn net.Conn, respCh chan map[string]any, clientExitChan chan struct{}) {
-	for {
-		select {
-		case <-clientExitChan:
-		case r := <-respCh:
-			responseJson, _ := json.Marshal(r)
-			fmt.Fprintf(conn, string(responseJson)+"\n")
-		}
-	}
+	close(clientExitChan)
 }
 
 func main() {
