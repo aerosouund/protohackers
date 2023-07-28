@@ -19,6 +19,57 @@ type Queue struct {
 	Heap        []int
 }
 
+func (q *Queue) PutJob(j *Job) {
+	q.JobsLookup[j.ID] = j
+	q.JobsMu.Lock()
+	q.JobsOrdered = append(q.JobsOrdered, *j)
+	q.JobsMu.Unlock()
+	sort.Sort(q.JobsOrdered)
+}
+
+func (q *Queue) GetJob() *Job {
+	if len(q.JobsOrdered) == 0 {
+		return nil
+	}
+	n := 0
+	for i := 0; i < q.JobsOrdered.Len(); i++ {
+		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" {
+			n += 1
+		} else {
+			return q.JobsLookup[q.JobsOrdered[n].ID]
+		}
+	}
+	return nil // should this order be reversed ?
+}
+
+func (q *Queue) DeleteJob(id string) error {
+	if len(q.JobsOrdered) == 1 && q.JobsOrdered[0].ID == id {
+		q.JobsOrdered = SortedJobs{}
+	}
+
+	for i, _ := range q.JobsOrdered {
+		if q.JobsOrdered[i].ID == id {
+			q.JobsOrdered = append(q.JobsOrdered[:i], q.JobsOrdered[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("Job not found in queue")
+}
+
+type SortedJobs []Job
+
+func (sj SortedJobs) Len() int {
+	return len(sj)
+}
+
+func (sj SortedJobs) Less(i, j int) bool {
+	return sj[j].Priority < sj[i].Priority
+}
+
+func (sj SortedJobs) Swap(i, j int) {
+	sj[i], sj[j] = sj[j], sj[i]
+}
+
 type Job struct {
 	ID       string
 	Priority int
@@ -70,53 +121,6 @@ func NewResponse(status, queue, id string, pri int, job map[string]interface{}) 
 		"id":     id,
 		"pri":    pri,
 	}
-}
-
-func (q *Queue) PutJob(j *Job) {
-	q.JobsLookup[j.ID] = j
-	q.JobsMu.Lock()
-	q.JobsOrdered = append(q.JobsOrdered, *j)
-	q.JobsMu.Unlock()
-	sort.Sort(q.JobsOrdered)
-}
-
-func (q *Queue) GetJob() *Job {
-	if len(q.JobsOrdered) == 0 {
-		return nil
-	}
-	n := 0
-	for i := 0; i < q.JobsOrdered.Len(); i++ {
-		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" {
-			n += 1
-		} else {
-			return q.JobsLookup[q.JobsOrdered[n].ID]
-		}
-	}
-	return nil // should this order be reversed ?
-}
-
-func (q *Queue) DeleteJob(id string) error {
-	for i, _ := range q.JobsOrdered {
-		if q.JobsOrdered[i].ID == id {
-			q.JobsOrdered = append(q.JobsOrdered[:i], q.JobsOrdered[i:]...)
-			return nil
-		}
-	}
-	return fmt.Errorf("Job not found in queue")
-}
-
-type SortedJobs []Job
-
-func (sj SortedJobs) Len() int {
-	return len(sj)
-}
-
-func (sj SortedJobs) Less(i, j int) bool {
-	return sj[j].Priority < sj[i].Priority
-}
-
-func (sj SortedJobs) Swap(i, j int) {
-	sj[i], sj[j] = sj[j], sj[i]
 }
 
 var ErrQueueNotFound = errors.New("Attempting to get jobs from a queue that doesn't exist")
