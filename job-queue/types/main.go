@@ -46,7 +46,8 @@ func (q *Queue) GetJob(clientAddr string) *Job {
 
 	q.JobsMu.Lock()
 	for i := 0; i < q.JobsOrdered.Len(); i++ {
-		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" || j.Deleted {
+		// j.Client != ""
+		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Priority < 0 || j.Deleted {
 			n += 1
 		} else {
 			return q.JobsLookup[q.JobsOrdered[n].ID]

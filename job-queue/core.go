@@ -137,10 +137,9 @@ func handleMessage(clientAddr string, messageBytes []byte, respCh chan map[strin
 		// }
 		qm.JobsInProgress[clientAddr] = append(qm.JobsInProgress[clientAddr], maxPriJob)
 		qm.JobsMu.Unlock()
-
 		maxPriJob.Priority = -maxPriJob.Priority
 
-		resp = types.NewResponse("ok", maxPriJob.Queue, maxPriJob.ID, maxPriJob.Priority, maxPriJob.Body)
+		resp = types.NewResponse("ok", maxPriJob.Queue, maxPriJob.ID, -maxPriJob.Priority, maxPriJob.Body)
 		write(conn, resp, message)
 		return
 
