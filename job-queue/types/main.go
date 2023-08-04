@@ -2,7 +2,6 @@ package types
 
 import (
 	"errors"
-	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -24,23 +23,32 @@ type Queue struct {
 }
 
 func (q *Queue) PutJob(j *Job) {
+	// defer q.JobsMu.Unlock()
+	defer q.LookupMu.Unlock()
+
+	// q.JobsMu.Lock()
+	q.LookupMu.Lock()
+
 	q.JobsLookup[j.ID] = j
-	q.JobsMu.Lock()
-	q.JobsOrdered = append(q.JobsOrdered, *j)
+	q.JobsOrdered = append(q.JobsOrdered, j)
 	sort.Sort(q.JobsOrdered)
-	q.JobsMu.Unlock()
+	return
+
 }
 
 func (q *Queue) GetJob() *Job {
 	defer q.JobsMu.Unlock()
+	// defer q.LookupMu.Unlock()  I JUST NEED TO KNOW THE ORDER?
+
 	if len(q.JobsOrdered) == 0 {
 		return nil
 	}
 	n := 0
 
 	q.JobsMu.Lock()
+	// q.LookupMu.Lock()
 	for i := 0; i < q.JobsOrdered.Len(); i++ {
-		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" {
+		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" || j.Deleted {
 			n += 1
 		} else {
 			return q.JobsLookup[q.JobsOrdered[n].ID]
@@ -49,32 +57,22 @@ func (q *Queue) GetJob() *Job {
 	return nil
 }
 
-func (q *Queue) DeleteJob(id string) error {
+func (q *Queue) DeleteJob(id string) {
+	// defer q.LookupMu.Unlock()
 	if len(q.JobsOrdered) == 1 && q.JobsOrdered[0].ID == id {
-		q.LookupMu.Lock()
-		// delete(q.JobsLookup, id)
-		q.LookupMu.Unlock()
+		// q.LookupMu.Lock()
+		q.JobsLookup[id].Deleted = true
 
 		q.JobsOrdered = SortedJobs{}
+		return
 	}
 
-	for i, _ := range q.JobsOrdered {
-		if q.JobsOrdered[i].ID == id {
-			fmt.Printf("job found with id %v in index %d\n", id, i)
-			q.JobsMu.Lock()
-			q.JobsOrdered = append(q.JobsOrdered[:i], q.JobsOrdered[i+1:]...)
-			q.JobsMu.Unlock()
-
-			q.LookupMu.Lock()
-			// delete(q.JobsLookup, id)
-			q.LookupMu.Unlock()
-			return nil
-		}
-	}
-	return fmt.Errorf("Job not found in queue")
+	// q.LookupMu.Lock()
+	q.JobsLookup[id].Deleted = true
+	// q.LookupMu.Unlock()
 }
 
-type SortedJobs []Job
+type SortedJobs []*Job
 
 func (sj SortedJobs) Len() int {
 	return len(sj)
@@ -92,6 +90,7 @@ type Job struct {
 	ID       string
 	Priority int
 	Body     map[string]interface{}
+	Deleted  bool
 
 	ClientMu sync.Mutex
 	Client   string

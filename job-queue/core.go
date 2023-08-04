@@ -1,17 +1,17 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"jobs/types"
+	"math/rand"
 	"net"
 	"strconv"
+	"time"
 )
 
 func validateMessage(messageBytes []byte) error {
 	message := string(messageBytes)
-	fmt.Println("message: ", message)
 	var messageInterface interface{}
 
 	err := json.Unmarshal([]byte(message), &messageInterface)
@@ -59,7 +59,7 @@ func validateMessage(messageBytes []byte) error {
 	}
 }
 
-func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes []byte, respCh chan map[string]any, conn net.Conn) {
+func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes []byte, respCh chan map[string]any, conn net.Conn, disconnected bool) {
 	message := string(messageBytes)
 	var messageJson map[string]any
 
@@ -74,7 +74,6 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 			stringQueues[i] = v.(string)
 		}
 		for _, queueName := range stringQueues {
-
 			q, ok := qm.Queues[queueName]
 			if ok {
 				j := q.GetJob()
@@ -88,40 +87,66 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		resp := make(map[string]any)
 		if len(js) == 0 && messageJson["wait"] != true {
 			resp["status"] = "no-job"
-			write(conn, resp)
+			write(conn, resp, message)
 			return
 		}
-		if len(js) == 0 && messageJson["wait"] == true {
-			j := waitOnJobs(clientExitChan, stringQueues)
-			if j == nil {
-				return
+		if messageJson["wait"] == true {
+			for {
+				for _, queuename := range stringQueues {
+					q := qm.Queues[queuename]
+					if q != nil {
+						j := q.GetJob()
+						if j != nil {
+							j.ClientMu.Lock()
+							if j.Client == "" {
+								j.Client = clientAddr
+								js = append(js, j)
+								j.ClientMu.Unlock()
+								break
+							}
+						}
+					}
+				}
+				rand.Seed(time.Now().UnixNano())
+				sleepTime := rand.Intn(100)
+				time.Sleep(time.Millisecond * time.Duration(sleepTime))
+
+				if len(js) > 0 || disconnected {
+					break
+				}
 			}
-			js = append(js, j)
 		}
-		var maxPriJob = &types.Job{Priority: 0}
+		var maxPriJob = &types.Job{Priority: -1}
 		for _, j := range js {
 			if j.Priority > maxPriJob.Priority {
 				maxPriJob = j
 			}
 		}
 
+		if maxPriJob.Priority == -1 {
+			resp["status"] = "no-job"
+			r := types.NewResponse("ok", js[0].Queue, js[0].ID, js[0].Priority, js[0].Body)
+			rstring, _ := json.Marshal(r)
+			write(conn, resp, message+" "+string(rstring))
+			return
+		}
+
 		// check if this client has requested jobs before or no
 		// if not, initialize a map entry with their address
+		qm.JobsMu.Lock()
 		_, ok := qm.JobsInProgress[clientAddr]
 		if !ok {
 			qm.JobsInProgress[clientAddr] = make(map[string]*types.Job)
 		}
-
-		qm.JobsMu.Lock()
 		qm.JobsInProgress[clientAddr][maxPriJob.ID] = maxPriJob
 		qm.JobsMu.Unlock()
 
-		maxPriJob.ClientMu.Lock()
+		// maxPriJob.ClientMu.Lock()
 		maxPriJob.Client = clientAddr
-		maxPriJob.ClientMu.Unlock()
+		// maxPriJob.ClientMu.Unlock()
 
 		resp = types.NewResponse("ok", maxPriJob.Queue, maxPriJob.ID, maxPriJob.Priority, maxPriJob.Body)
-		write(conn, resp)
+		write(conn, resp, message)
 		return
 
 	case "put":
@@ -135,51 +160,61 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 
 		q.PutJob(j)
 
-		q.LookupMu.Lock()
+		// q.LookupMu.Lock()
 		q.JobsLookup[j.ID] = j
-		q.LookupMu.Unlock()
+		// q.LookupMu.Unlock()
 
 		resp := make(map[string]any)
 		resp["id"] = j.ID
 		resp["status"] = "ok"
-		write(conn, resp)
+		write(conn, resp, message)
 		return
 
 	case "abort":
 		// converting the float to a string index
 		id := strconv.FormatFloat(messageJson["id"].(float64), 'f', -1, 64)
 		// check if this client is handling this job id
+		qm.JobsMu.Lock()
 		j, ok := qm.JobsInProgress[clientAddr][id]
 
 		// remove the job from jobs in progress but don't delete it
 		resp := make(map[string]any)
 		resp["id"] = id
 		if !ok {
+			qm.JobsMu.Unlock()
 			resp["status"] = "no-job"
-			write(conn, resp)
+
+			write(conn, resp, message)
 			return
 		}
 		j.Client = ""
+		delete(qm.JobsInProgress[clientAddr], id)
+		qm.JobsMu.Unlock()
 		resp["status"] = "ok"
-		write(conn, resp)
+		write(conn, resp, message)
 		return
 
 	case "delete":
 		id := strconv.FormatFloat(messageJson["id"].(float64), 'f', -1, 64)
+		defer qm.JobsMu.Unlock()
 
 		resp := make(map[string]any)
 		var j *types.Job = nil
 
+		qm.JobsMu.Lock()
+
 		for _, q := range qm.Queues {
+			q.LookupMu.Lock()
 			job, ok := q.JobsLookup[id]
 			if ok {
 				j = job
 			}
+			q.LookupMu.Unlock()
 		}
 
-		if j == nil {
+		if j == nil || j.Deleted {
 			resp["status"] = "no-job"
-			write(conn, resp)
+			write(conn, resp, message)
 			return
 		}
 
@@ -190,72 +225,29 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 
 		// delete this job if it was found in a queue
 		q := qm.Queues[j.Queue]
-		err := q.DeleteJob(j.ID)
-		if err != nil {
-			resp["status"] = "no-job"
-			write(conn, resp)
-			return
-		}
+		// err :=
+		q.DeleteJob(j.ID)
+		// if err != nil {
+		// 	resp["status"] = "no-job"
+		// 	write(conn, resp, message)
+		// 	return
+		// }
 
 		resp["id"] = id
 		resp["status"] = "ok"
-		write(conn, resp)
+		write(conn, resp, message)
 		return
 	}
 }
 
-func waitOnJobs(clientExitChan chan struct{}, queues []string) *types.Job {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	jobCh := make(chan *types.Job)
-	for _, queuename := range queues {
-		go waitOnQueue(ctx, queuename, jobCh, clientExitChan)
-	}
-
+func aborter(clientAddr string, clientExitChan chan struct{}, disconnected *bool) {
+	defer qm.JobsMu.Unlock()
 	for {
-		select {
-		case <-clientExitChan:
-			// fmt.Println("canceling goroutines")
-			// cancel()
-			return nil
-		case j := <-jobCh:
-			return j
+		if *disconnected {
+			break
 		}
 	}
-}
-
-func waitOnQueue(ctx context.Context, queueName string, jobCh chan<- *types.Job, clientExitChan <-chan struct{}) {
-	// prevent goroutines from leaking if the client cancelled
-	fmt.Println("starting wait on jobs")
-	for {
-		select {
-		case <-clientExitChan:
-			fmt.Println("canceling goroutines")
-			return
-		case <-ctx.Done():
-			fmt.Println("goroutine exiting")
-			return
-		default:
-			q, ok := qm.Queues[queueName]
-			if !ok {
-				fmt.Println("queue doesnt exist")
-				return
-			}
-			if ok {
-				j := q.GetJob()
-				if j != nil {
-					resp := types.NewResponse("ok", j.Queue, j.ID, j.Priority, j.Body)
-					write(conn, resp)
-					return
-				}
-			}
-		}
-	}
-}
-
-func aborter(clientAddr string, clientExitChan chan struct{}) {
-	<-clientExitChan
+	qm.JobsMu.Lock()
 	clientJobs := qm.JobsInProgress[clientAddr]
 	for _, j := range clientJobs {
 		j.ClientMu.Lock()
@@ -265,8 +257,9 @@ func aborter(clientAddr string, clientExitChan chan struct{}) {
 	delete(qm.JobsInProgress, clientAddr)
 }
 
-func write(conn net.Conn, r map[string]any) {
+func write(conn net.Conn, r map[string]any, message string) {
 	responseJson, _ := json.Marshal(r)
-	fmt.Println("responding:", string(responseJson))
+	fmt.Printf("responding: %v to message %v\n", string(responseJson), message)
 	fmt.Fprintf(conn, string(responseJson)+"\n")
+	return
 }
