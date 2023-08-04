@@ -13,12 +13,11 @@ var qm *types.QueueManager
 // STORE A SINGLE REFERENCE TO THE CLIENT
 // INVESTIGATE IF A MAX HEAP IS FASTER
 
-func handleConnection(conn net.Conn, clientExitChan chan struct{}) {
+func handleConnection(conn net.Conn) {
 	disconnected := false
 
 	clientAddr := conn.RemoteAddr().String()
 	respCh := make(chan map[string]any)
-	go aborter(conn.RemoteAddr().String(), clientExitChan, &disconnected)
 
 	for s := bufio.NewScanner(conn); s.Scan(); {
 		b := s.Bytes()
@@ -28,11 +27,11 @@ func handleConnection(conn net.Conn, clientExitChan chan struct{}) {
 			write(conn, types.ErrMap, string(b))
 			continue
 		} else {
-			handleMessage(clientExitChan, clientAddr, b, respCh, conn, disconnected)
+			handleMessage(clientAddr, b, respCh, conn, disconnected)
 		}
 	}
 	disconnected = true
-	aborter(conn.RemoteAddr().String(), clientExitChan, &disconnected)
+	abort(conn.RemoteAddr().String())
 }
 
 func main() {
@@ -53,8 +52,6 @@ func main() {
 			continue
 		}
 		fmt.Printf("New connection from %s\n", conn.RemoteAddr().String())
-
-		clientExitChan := make(chan struct{})
-		go handleConnection(conn, clientExitChan)
+		go handleConnection(conn)
 	}
 }

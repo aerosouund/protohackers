@@ -59,7 +59,7 @@ func validateMessage(messageBytes []byte) error {
 	}
 }
 
-func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes []byte, respCh chan map[string]any, conn net.Conn, disconnected bool) {
+func handleMessage(clientAddr string, messageBytes []byte, respCh chan map[string]any, conn net.Conn, disconnected bool) {
 	message := string(messageBytes)
 	var messageJson map[string]any
 
@@ -76,9 +76,9 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		for _, queueName := range stringQueues {
 			q, ok := qm.Queues[queueName]
 			if ok {
-				j := q.GetJob()
+				j := q.GetJob(clientAddr)
 
-				if j != nil && j.Client == "" {
+				if j != nil {
 					js = append(js, j)
 				}
 			}
@@ -95,13 +95,10 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 				for _, queuename := range stringQueues {
 					q := qm.Queues[queuename]
 					if q != nil {
-						j := q.GetJob()
+						j := q.GetJob(clientAddr)
 						if j != nil {
-							j.ClientMu.Lock()
 							if j.Client == "" {
-								j.Client = clientAddr
 								js = append(js, j)
-								j.ClientMu.Unlock()
 								break
 							}
 						}
@@ -134,16 +131,14 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		// check if this client has requested jobs before or no
 		// if not, initialize a map entry with their address
 		qm.JobsMu.Lock()
-		_, ok := qm.JobsInProgress[clientAddr]
-		if !ok {
-			qm.JobsInProgress[clientAddr] = make(map[string]*types.Job)
-		}
-		qm.JobsInProgress[clientAddr][maxPriJob.ID] = maxPriJob
+		// _, ok := qm.JobsInProgress[clientAddr]
+		// if !ok {
+		// 	qm.JobsInProgress[clientAddr] = make(map[string]*types.Job)
+		// }
+		qm.JobsInProgress[clientAddr] = append(qm.JobsInProgress[clientAddr], maxPriJob)
 		qm.JobsMu.Unlock()
 
-		// maxPriJob.ClientMu.Lock()
-		maxPriJob.Client = clientAddr
-		// maxPriJob.ClientMu.Unlock()
+		maxPriJob.Priority = -maxPriJob.Priority
 
 		resp = types.NewResponse("ok", maxPriJob.Queue, maxPriJob.ID, maxPriJob.Priority, maxPriJob.Body)
 		write(conn, resp, message)
@@ -175,12 +170,20 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 		id := strconv.FormatFloat(messageJson["id"].(float64), 'f', -1, 64)
 		// check if this client is handling this job id
 		qm.JobsMu.Lock()
-		j, ok := qm.JobsInProgress[clientAddr][id]
+		found := false
+		var j = &types.Job{}
+		for i, job := range qm.JobsInProgress[clientAddr] {
+			if qm.JobsInProgress[clientAddr][i].ID == id && job.Client != "" {
+				found = true
+				j = job
+			}
+
+		}
 
 		// remove the job from jobs in progress but don't delete it
 		resp := make(map[string]any)
 		resp["id"] = id
-		if !ok {
+		if !found {
 			qm.JobsMu.Unlock()
 			resp["status"] = "no-job"
 
@@ -188,7 +191,7 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 			return
 		}
 		j.Client = ""
-		delete(qm.JobsInProgress[clientAddr], id)
+		// delete(qm.JobsInProgress[clientAddr], id)
 		qm.JobsMu.Unlock()
 		resp["status"] = "ok"
 		write(conn, resp, message)
@@ -220,18 +223,13 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 
 		// if this job is being handled by a client
 		if j.Client != "" {
-			delete(qm.JobsInProgress[j.Client], id)
+			// delete(qm.JobsInProgress[j.Client], id)
+			j.Client = ""
 		}
 
 		// delete this job if it was found in a queue
 		q := qm.Queues[j.Queue]
-		// err :=
 		q.DeleteJob(j.ID)
-		// if err != nil {
-		// 	resp["status"] = "no-job"
-		// 	write(conn, resp, message)
-		// 	return
-		// }
 
 		resp["id"] = id
 		resp["status"] = "ok"
@@ -240,19 +238,12 @@ func handleMessage(clientExitChan chan struct{}, clientAddr string, messageBytes
 	}
 }
 
-func aborter(clientAddr string, clientExitChan chan struct{}, disconnected *bool) {
+func abort(clientAddr string) {
 	defer qm.JobsMu.Unlock()
-	for {
-		if *disconnected {
-			break
-		}
-	}
 	qm.JobsMu.Lock()
 	clientJobs := qm.JobsInProgress[clientAddr]
 	for _, j := range clientJobs {
-		j.ClientMu.Lock()
-		j.Client = ""
-		j.ClientMu.Unlock()
+		j.Priority = -j.Priority
 	}
 	delete(qm.JobsInProgress, clientAddr)
 }

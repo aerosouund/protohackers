@@ -36,9 +36,8 @@ func (q *Queue) PutJob(j *Job) {
 
 }
 
-func (q *Queue) GetJob() *Job {
+func (q *Queue) GetJob(clientAddr string) *Job {
 	defer q.JobsMu.Unlock()
-	// defer q.LookupMu.Unlock()  I JUST NEED TO KNOW THE ORDER?
 
 	if len(q.JobsOrdered) == 0 {
 		return nil
@@ -46,7 +45,6 @@ func (q *Queue) GetJob() *Job {
 	n := 0
 
 	q.JobsMu.Lock()
-	// q.LookupMu.Lock()
 	for i := 0; i < q.JobsOrdered.Len(); i++ {
 		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" || j.Deleted {
 			n += 1
@@ -115,13 +113,13 @@ type QueueManager struct {
 	JobsMu sync.Mutex
 
 	// it is this way because when we try to delete a job we need a reference to the queue it belongs to
-	JobsInProgress map[string]map[string]*Job
+	JobsInProgress map[string][]*Job
 }
 
 func NewQueueManager() *QueueManager {
 	return &QueueManager{
 		Queues:         make(map[string]*Queue),
-		JobsInProgress: make(map[string]map[string]*Job), // from client address to job ids to pointer to job
+		JobsInProgress: make(map[string][]*Job), // from client address to job ids to pointer to job
 	}
 }
 
