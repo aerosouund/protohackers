@@ -4,19 +4,22 @@ import (
 	"bufio"
 	"fmt"
 	"jobs/types"
+	"math/rand"
 	"net"
 	"os"
+	"strconv"
+	"time"
 )
 
 var qm *types.QueueManager
 
-// STORE A SINGLE REFERENCE TO THE CLIENT
-// INVESTIGATE IF A MAX HEAP IS FASTER
-
 func handleConnection(conn net.Conn) {
+	defer conn.Close()
 	disconnected := false
+	rand.Seed(time.Now().UnixNano())
+	id := rand.Intn(100000000000000)
 
-	clientAddr := conn.RemoteAddr().String()
+	clientAddr := strconv.Itoa(id)
 
 	for s := bufio.NewScanner(conn); s.Scan(); {
 		b := s.Bytes()
@@ -24,13 +27,13 @@ func handleConnection(conn net.Conn) {
 		if err != nil {
 			fmt.Println(err.Error())
 			write(conn, types.ErrMap, string(b))
-			continue
+			return
 		} else {
 			handleMessage(clientAddr, b, conn, disconnected)
 		}
 	}
 	disconnected = true
-	abort(conn.RemoteAddr().String())
+	abort(clientAddr)
 }
 
 func main() {

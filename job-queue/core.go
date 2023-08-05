@@ -3,14 +3,18 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"jobs/types"
 	"net"
+	"sort"
 	"strconv"
+	"time"
 )
 
 func validateMessage(messageBytes []byte) error {
 	message := string(messageBytes)
 	var messageInterface interface{}
+	fmt.Println(message)
 
 	err := json.Unmarshal([]byte(message), &messageInterface)
 	if err != nil {
@@ -30,6 +34,9 @@ func validateMessage(messageBytes []byte) error {
 			if _, ok := messageJson[key]; !ok {
 				return types.ErrInvalidMessage
 			}
+		}
+		if len(messageJson["queues"].([]any)) == 0 {
+			return types.ErrInvalidMessage
 		}
 		return nil
 	case "put":
@@ -80,18 +87,18 @@ func handleMessage(clientAddr string, messageBytes []byte, conn net.Conn, discon
 				write(conn, resp, message)
 				return
 			}
-			resp := types.NewResponse("ok", j.Queue, j.ID, -j.Priority, j.Body)
-			write(conn, resp, message)
-
+			resp := types.NewResponse("ok", j.Queue, j.ID, j.Priority, j.Body)
 			qm.Lock()
 			qm.JobsInProgress[clientAddr] = append(qm.JobsInProgress[clientAddr], j)
 			qm.Unlock()
+			write(conn, resp, message)
 
 			return
 		}
 		// get jobs from all queues and return max pri
 		if messageJson["wait"] == true {
 			for {
+				time.Sleep(time.Millisecond * 100)
 				j = qm.GetJob(clientAddr, stringQueues)
 				if j != nil || disconnected {
 					break
@@ -100,24 +107,28 @@ func handleMessage(clientAddr string, messageBytes []byte, conn net.Conn, discon
 			if disconnected {
 				return
 			}
-			resp := types.NewResponse("ok", j.Queue, j.ID, -j.Priority, j.Body)
-			write(conn, resp, message)
+			resp := types.NewResponse("ok", j.Queue, j.ID, j.Priority, j.Body)
+			qm.Lock()
 			qm.JobsInProgress[clientAddr] = append(qm.JobsInProgress[clientAddr], j)
+			qm.Unlock()
+			write(conn, resp, message)
 
 			return
 
 		}
 
 	case "put":
+
 		j := types.NewJob(int(messageJson["pri"].(float64)), messageJson["job"].(map[string]interface{}), messageJson["queue"].(string))
+		qm.Lock()
 		q, ok := qm.Queues[messageJson["queue"].(string)]
 		if !ok {
-			qm.Lock()
+
 			qname := messageJson["queue"].(string)
 			q = types.NewQueue()
 			qm.Queues[qname] = q
-			qm.Unlock()
 		}
+		qm.Unlock()
 
 		qm.PutJob(q, j)
 
@@ -131,64 +142,43 @@ func handleMessage(clientAddr string, messageBytes []byte, conn net.Conn, discon
 		// converting the float to a string index
 		id := strconv.FormatFloat(messageJson["id"].(float64), 'f', -1, 64)
 		// check if this client is handling this job id
-		qm.JobsMu.Lock()
-		found := false
-		var j = &types.Job{}
-		for _, job := range qm.JobsInProgress[clientAddr] {
-			if job.ID == id && !job.Deleted {
-				found = true
-				j = job
-			}
-		}
-		qm.JobsMu.Unlock()
-
-		// remove the job from jobs in progress but don't delete it
 		resp := make(map[string]any)
 		resp["id"] = id
+
+		found := qm.AbortJob(clientAddr, id)
+
 		if !found {
 			resp["status"] = "no-job"
 			write(conn, resp, message)
 			return
 		}
-		j.Priority = -j.Priority
-		// qm.JobsInProgress[clientAddr] = append(qm.JobsInProgress[clientAddr], ) this means several clients can have
-		// the job in their arrays, may have unintended effects
+
 		resp["status"] = "ok"
 		write(conn, resp, message)
 		return
 
 	case "delete":
 		id := strconv.FormatFloat(messageJson["id"].(float64), 'f', -1, 64)
-		defer qm.JobsMu.Unlock()
 
 		resp := make(map[string]any)
-		var j *types.Job = nil
 
-		qm.JobsMu.Lock()
-
-		for _, q := range qm.Queues {
-			q.LookupMu.Lock() // may delete
-			job, ok := q.JobsLookup[id]
-			if ok {
-				j = job
-			}
-			q.LookupMu.Unlock()
-		}
-
-		if j == nil || j.Deleted {
+		qm.Lock()
+		job, ok := qm.Jobs[id]
+		qm.Unlock()
+		if !ok {
 			resp["status"] = "no-job"
 			write(conn, resp, message)
 			return
 		}
 
-		// if this job is being handled by a client
-		if j.Client != "" {
-			// delete(qm.JobsInProgress[j.Client], id)
-			j.Client = ""
+		if job.Deleted {
+			resp["status"] = "no-job"
+			write(conn, resp, message)
+			return
 		}
 
 		// delete this job if it was found in a queue
-		qm.DeleteJob(j)
+		qm.DeleteJob(job)
 
 		resp["id"] = id
 		resp["status"] = "ok"
@@ -198,18 +188,18 @@ func handleMessage(clientAddr string, messageBytes []byte, conn net.Conn, discon
 }
 
 func abort(clientAddr string) {
-	defer qm.JobsMu.Unlock()
-	qm.JobsMu.Lock()
+	defer qm.Unlock()
+	qm.Lock()
 	clientJobs := qm.JobsInProgress[clientAddr]
 	for _, j := range clientJobs {
-		j.Priority = -j.Priority
+		j.Client = ""
+		qm.Queues[j.Queue].JobsOrdered = append(qm.Queues[j.Queue].JobsOrdered, j)
+		sort.Sort(qm.Queues[j.Queue].JobsOrdered)
 	}
 	delete(qm.JobsInProgress, clientAddr)
 }
 
 func write(conn net.Conn, r map[string]any, message string) {
 	responseJson, _ := json.Marshal(r)
-	fmt.Printf("responding: %v to message %v\n", string(responseJson), message)
-	fmt.Fprintf(conn, string(responseJson))
-	return
+	io.WriteString(conn, string(responseJson))
 }

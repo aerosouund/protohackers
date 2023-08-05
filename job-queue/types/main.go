@@ -23,16 +23,13 @@ type Queue struct {
 }
 
 func (qm *QueueManager) PutJob(queue *Queue, j *Job) {
-	// defer q.JobsMu.Unlock()
 	defer qm.Unlock()
-
-	// q.JobsMu.Lock()
 	qm.Lock()
 
 	queue.JobsLookup[j.ID] = j
+	qm.Jobs[j.ID] = j
 	queue.JobsOrdered = append(queue.JobsOrdered, j)
 	sort.Sort(queue.JobsOrdered)
-
 }
 
 func (qm *QueueManager) GetJob(clientAddr string, queues []string) *Job {
@@ -40,18 +37,18 @@ func (qm *QueueManager) GetJob(clientAddr string, queues []string) *Job {
 
 	qm.Lock()
 	var maxPriJob = &Job{Priority: -1}
+	var idx int
 	for _, queue := range queues {
 		q := qm.Queues[queue]
 		if q != nil && len(q.JobsOrdered) > 0 {
 			n := 0
-			// q.JobsMu.Lock()
 			for i := 0; i < q.JobsOrdered.Len(); i++ {
-				// j.Client != ""
-				if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Priority < 0 || j.Deleted {
+				if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Client != "" || j.Deleted {
 					n += 1
 				} else {
 					if q.JobsLookup[q.JobsOrdered[n].ID].Priority > maxPriJob.Priority {
 						maxPriJob = q.JobsLookup[q.JobsOrdered[n].ID]
+						idx = n
 						break
 					}
 				}
@@ -61,7 +58,9 @@ func (qm *QueueManager) GetJob(clientAddr string, queues []string) *Job {
 	if maxPriJob.Priority == -1 {
 		return nil
 	}
-	maxPriJob.Priority = -maxPriJob.Priority
+	maxPriJob.Client = clientAddr
+	q := qm.Queues[maxPriJob.Queue]
+	q.JobsOrdered = append(q.JobsOrdered[:idx], q.JobsOrdered[idx+1:]...)
 	return maxPriJob
 }
 
@@ -69,6 +68,27 @@ func (qm *QueueManager) DeleteJob(j *Job) {
 	qm.Lock()
 	j.Deleted = true
 	qm.Unlock()
+}
+
+func (qm *QueueManager) AbortJob(clientAddr string, jobID string) bool {
+	defer qm.Unlock()
+	qm.Lock()
+
+	var found = false
+	for i, job := range qm.JobsInProgress[clientAddr] {
+		if job.ID == jobID && !job.Deleted {
+			found = true
+			qm.Queues[job.Queue].JobsOrdered = append(qm.Queues[job.Queue].JobsOrdered, job)
+			job.Client = ""
+			qm.JobsInProgress[clientAddr][i] = qm.JobsInProgress[clientAddr][0]
+			qm.JobsInProgress[clientAddr] = qm.JobsInProgress[clientAddr][1:]
+
+			sort.Sort(qm.Queues[job.Queue].JobsOrdered)
+
+		}
+	}
+	return found
+
 }
 
 type SortedJobs []*Job
@@ -91,8 +111,7 @@ type Job struct {
 	Priority int
 	Body     map[string]interface{}
 	Deleted  bool
-
-	Client string
+	Client   string
 
 	Queue string
 }
@@ -111,6 +130,7 @@ func NewJob(pri int, body map[string]interface{}, queue string) *Job {
 type QueueManager struct {
 	sync.Mutex
 	Queues map[string]*Queue
+	Jobs   map[string]*Job
 
 	JobsMu sync.Mutex
 
@@ -121,6 +141,7 @@ type QueueManager struct {
 func NewQueueManager() *QueueManager {
 	return &QueueManager{
 		Queues:         make(map[string]*Queue),
+		Jobs:           make(map[string]*Job),
 		JobsInProgress: make(map[string][]*Job), // from client address to job ids to pointer to job
 	}
 }
