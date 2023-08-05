@@ -22,53 +22,53 @@ type Queue struct {
 	Heap        []int
 }
 
-func (q *Queue) PutJob(j *Job) {
+func (qm *QueueManager) PutJob(queue *Queue, j *Job) {
 	// defer q.JobsMu.Unlock()
-	defer q.LookupMu.Unlock()
+	defer qm.Unlock()
 
 	// q.JobsMu.Lock()
-	q.LookupMu.Lock()
+	qm.Lock()
 
-	q.JobsLookup[j.ID] = j
-	q.JobsOrdered = append(q.JobsOrdered, j)
-	sort.Sort(q.JobsOrdered)
-	return
+	queue.JobsLookup[j.ID] = j
+	queue.JobsOrdered = append(queue.JobsOrdered, j)
+	sort.Sort(queue.JobsOrdered)
 
 }
 
-func (q *Queue) GetJob(clientAddr string) *Job {
-	defer q.JobsMu.Unlock()
+func (qm *QueueManager) GetJob(clientAddr string, queues []string) *Job {
+	defer qm.Unlock()
 
-	if len(q.JobsOrdered) == 0 {
-		return nil
-	}
-	n := 0
-
-	q.JobsMu.Lock()
-	for i := 0; i < q.JobsOrdered.Len(); i++ {
-		// j.Client != ""
-		if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Priority < 0 || j.Deleted {
-			n += 1
-		} else {
-			return q.JobsLookup[q.JobsOrdered[n].ID]
+	qm.Lock()
+	var maxPriJob = &Job{Priority: -1}
+	for _, queue := range queues {
+		q := qm.Queues[queue]
+		if q != nil && len(q.JobsOrdered) > 0 {
+			n := 0
+			// q.JobsMu.Lock()
+			for i := 0; i < q.JobsOrdered.Len(); i++ {
+				// j.Client != ""
+				if j := q.JobsLookup[q.JobsOrdered[n].ID]; j.Priority < 0 || j.Deleted {
+					n += 1
+				} else {
+					if q.JobsLookup[q.JobsOrdered[n].ID].Priority > maxPriJob.Priority {
+						maxPriJob = q.JobsLookup[q.JobsOrdered[n].ID]
+						break
+					}
+				}
+			}
 		}
 	}
-	return nil
+	if maxPriJob.Priority == -1 {
+		return nil
+	}
+	maxPriJob.Priority = -maxPriJob.Priority
+	return maxPriJob
 }
 
-func (q *Queue) DeleteJob(id string) {
-	// defer q.LookupMu.Unlock()
-	if len(q.JobsOrdered) == 1 && q.JobsOrdered[0].ID == id {
-		// q.LookupMu.Lock()
-		q.JobsLookup[id].Deleted = true
-
-		q.JobsOrdered = SortedJobs{}
-		return
-	}
-
-	// q.LookupMu.Lock()
-	q.JobsLookup[id].Deleted = true
-	// q.LookupMu.Unlock()
+func (qm *QueueManager) DeleteJob(j *Job) {
+	qm.Lock()
+	j.Deleted = true
+	qm.Unlock()
 }
 
 type SortedJobs []*Job
@@ -86,13 +86,13 @@ func (sj SortedJobs) Swap(i, j int) {
 }
 
 type Job struct {
+	sync.Mutex
 	ID       string
 	Priority int
 	Body     map[string]interface{}
 	Deleted  bool
 
-	ClientMu sync.Mutex
-	Client   string
+	Client string
 
 	Queue string
 }
@@ -109,6 +109,7 @@ func NewJob(pri int, body map[string]interface{}, queue string) *Job {
 }
 
 type QueueManager struct {
+	sync.Mutex
 	Queues map[string]*Queue
 
 	JobsMu sync.Mutex

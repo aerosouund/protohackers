@@ -17,7 +17,6 @@ func handleConnection(conn net.Conn) {
 	disconnected := false
 
 	clientAddr := conn.RemoteAddr().String()
-	respCh := make(chan map[string]any)
 
 	for s := bufio.NewScanner(conn); s.Scan(); {
 		b := s.Bytes()
@@ -27,7 +26,7 @@ func handleConnection(conn net.Conn) {
 			write(conn, types.ErrMap, string(b))
 			continue
 		} else {
-			handleMessage(clientAddr, b, respCh, conn, disconnected)
+			handleMessage(clientAddr, b, conn, disconnected)
 		}
 	}
 	disconnected = true
