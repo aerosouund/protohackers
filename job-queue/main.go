@@ -17,7 +17,7 @@ func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	disconnected := false
 	rand.Seed(time.Now().UnixNano())
-	id := rand.Intn(100000000000000)
+	id := rand.Intn(100000000000000) // large client space to avoid clashes in high concurrency
 
 	clientAddr := strconv.Itoa(id)
 
@@ -33,7 +33,7 @@ func handleConnection(conn net.Conn) {
 		}
 	}
 	disconnected = true
-	abort(clientAddr)
+	abort(clientAddr) // cancel any potential jobs this client was handling
 }
 
 func main() {
