@@ -17,7 +17,7 @@ func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	disconnected := false
 	rand.Seed(time.Now().UnixNano())
-	id := rand.Intn(100000000000000) // large client space to avoid clashes in high concurrency
+	id := rand.Intn(math.MaxInt64) // large client space to avoid clashes in high concurrency
 
 	clientAddr := strconv.Itoa(id)
 
